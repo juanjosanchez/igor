@@ -1,4 +1,4 @@
-import { extractRoom } from "./extract.js";
+import { extractRoom, searchRoom } from "./extract.js";
 
 const DEFAULT_BUTTONS = `Unread | unread | Summarize what I missed {period}: main topics, decisions, open questions and anything that needs my attention.
 Day | 1d | Summarize this room's discussion {period}: main topics, decisions, open questions and action items.
@@ -28,15 +28,21 @@ const $ = (id) => document.getElementById(id);
 const el = { model: $("model"), log: $("log"), input: $("input"), send: $("send"), info: $("ctx-info"), grant: $("grant") };
 
 let cfg = { ...DEFAULTS };
-let history = [];
 let abort = null;
 let modelMax = 0;
 let roomReady = false;
 // Element moves its read marker seconds after a room is shown, so keep where
 // it was when the panel first saw the room
 let seen = null;
-const refs = new Map();
-const refsByNum = new Map();
+// One chat per room, kept in chrome.storage.session (memory only): what the
+// model saw, what the log shows, and the [#N] refs both of them use
+let chat = newChat(null);
+let switchLater = false;
+const entries = new WeakMap();
+
+function newChat(roomId) {
+  return { roomId, history: [], log: [], refs: new Map(), refsByNum: new Map(), next: 1 };
+}
 
 async function loadCfg() {
   cfg = { ...DEFAULTS, ...(await chrome.storage.local.get(Object.keys(DEFAULTS))) };
@@ -65,24 +71,24 @@ function registerRefs(room) {
   if (!/^![^\s/?#]+$/.test(room.roomId ?? "")) return;
   for (const m of room.messages) {
     if (!/^\$[^\s/?#]+$/.test(m.id ?? "")) continue;
-    let r = refs.get(m.id);
+    let r = chat.refs.get(m.id);
     if (!r) {
-      r = { n: refs.size + 1, id: m.id, url: `${room.base}#/room/${room.roomId}/${m.id}`, sender: m.sender, ts: m.ts };
-      refs.set(m.id, r);
-      refsByNum.set(r.n, r);
+      r = { n: chat.next++, id: m.id, url: `${room.base}#/room/${room.roomId}/${m.id}`, sender: m.sender, ts: m.ts };
+      chat.refs.set(m.id, r);
+      chat.refsByNum.set(r.n, r);
     }
     m.ref = r.n;
   }
   const inWindow = new Set(room.messages.map((m) => m.id));
   for (const m of room.messages) {
-    if (m.replyTo && inWindow.has(m.replyTo)) m.replyRef = refs.get(m.replyTo)?.n;
+    if (m.replyTo) m.replyRef = inWindow.has(m.replyTo) ? chat.refs.get(m.replyTo)?.n : undefined;
   }
 }
 
 function linkRefs(html) {
   return html.replace(REF_GROUP, (group) =>
     group.replace(/#?(\d+)/g, (m, n) => {
-      const r = refsByNum.get(Number(n));
+      const r = chat.refsByNum.get(Number(n));
       if (!r) return m;
       const title = escapeHtml(`${r.sender}, ${formatTime(r.ts)}`);
       return `<a href="${escapeHtml(r.url)}" data-ref="${r.n}" title="${title}" target="_blank" rel="noopener">#${r.n}</a>`;
@@ -93,18 +99,18 @@ function linkRefs(html) {
 // Cached part summaries outlive the panel's [#N] numbering, so they store event ids
 function refsToIds(text) {
   return text.replace(REF_GROUP, (group) =>
-    group.replace(/#?(\d+)/g, (m, n) => (refsByNum.has(Number(n)) ? `#{${refsByNum.get(Number(n)).id}}` : m)),
+    group.replace(/#?(\d+)/g, (m, n) => (chat.refsByNum.has(Number(n)) ? `#{${chat.refsByNum.get(Number(n)).id}}` : m)),
   );
 }
 
 function idsToRefs(text) {
-  return text.replace(/#\{([^}]+)\}/g, (m, id) => (refs.has(id) ? `#${refs.get(id).n}` : "#?"));
+  return text.replace(/#\{([^}]+)\}/g, (m, id) => (chat.refs.has(id) ? `#${chat.refs.get(id).n}` : "#?"));
 }
 
 function toMarkdown(text) {
   return text.replace(REF_GROUP, (group) =>
     group.slice(1, -1).replace(/#?(\d+)/g, (m, n) => {
-      const r = refsByNum.get(Number(n));
+      const r = chat.refsByNum.get(Number(n));
       return r ? `[#${r.n}](${r.url})` : m;
     }),
   );
@@ -119,14 +125,80 @@ function renderMarkdown(text) {
     .replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, (m) => m.replace(/<br>/g, "\n"));
 }
 
-function addMsg(role, text) {
+function renderEntry(entry) {
   const div = document.createElement("div");
-  div.className = `msg ${role}`;
-  if (role === "assistant") div.innerHTML = renderMarkdown(text);
+  div.className = `msg ${entry.role}`;
+  entries.set(div, entry);
+  setText(div, entry.text);
+  if (entry.stats) renderStats(div, entry);
+  return div;
+}
+
+function setText(div, text) {
+  const entry = entries.get(div);
+  entry.text = text;
+  if (entry.role === "assistant") div.innerHTML = renderMarkdown(text);
   else div.textContent = text;
+}
+
+function addMsg(role, text) {
+  const entry = { role, text };
+  chat.log.push(entry);
+  const div = renderEntry(entry);
   el.log.append(div);
   el.log.scrollTop = el.log.scrollHeight;
   return div;
+}
+
+// shown, but not kept with the room's chat
+function notice(text) {
+  el.log.append(renderEntry({ role: "error", text }));
+  el.log.scrollTop = el.log.scrollHeight;
+}
+
+function saveChat() {
+  if (!chat.roomId) return;
+  const key = `chat:${chat.roomId}`;
+  if (!chat.log.length) return chrome.storage.session.remove(key);
+  // keep only refs the chat mentions; a month window registers thousands
+  const cited = new Set();
+  for (const text of [...chat.log.map((e) => e.text), ...chat.history.map((m) => m.content ?? "")]) {
+    for (const group of text.match(REF_GROUP) ?? []) for (const n of group.match(/\d+/g)) cited.add(Number(n));
+  }
+  const value = {
+    history: chat.history,
+    log: chat.log,
+    refs: [...chat.refs.values()].filter((r) => cited.has(r.n)),
+    next: chat.next,
+  };
+  chrome.storage.session.set({ [key]: value }).catch(async () => {
+    // over the session quota: drop the other rooms' chats
+    const all = await chrome.storage.session.get(null);
+    await chrome.storage.session.remove(Object.keys(all).filter((k) => k.startsWith("chat:") && k !== key));
+    chrome.storage.session.set({ [key]: value }).catch(() => {});
+  });
+}
+
+async function switchChat(roomId) {
+  const key = `chat:${roomId}`;
+  const saved = (await chrome.storage.session.get(key))[key];
+  if (chat.roomId === roomId) return;
+  // an answer in progress belongs to the chat on screen; switch when it ends
+  if (abort) {
+    switchLater = true;
+    return;
+  }
+  saveChat();
+  chat = newChat(roomId);
+  if (saved) {
+    Object.assign(chat, { history: saved.history, log: saved.log, next: saved.next });
+    for (const r of saved.refs) {
+      chat.refs.set(r.id, r);
+      chat.refsByNum.set(r.n, r);
+    }
+  }
+  el.log.replaceChildren(...chat.log.map(renderEntry));
+  el.log.scrollTop = el.log.scrollHeight;
 }
 
 function effectiveCtx() {
@@ -169,7 +241,7 @@ async function loadModels() {
     save({ model: el.model.value });
     await loadModelLimit();
   } catch (e) {
-    addMsg("error", `Cannot list models from ${cfg.baseUrl}: ${e.message}. Is Ollama running with OLLAMA_ORIGINS=chrome-extension://* ?`);
+    notice(`Cannot list models from ${cfg.baseUrl}: ${e.message}. Is Ollama running with OLLAMA_ORIGINS=chrome-extension://* ?`);
   }
 }
 
@@ -181,26 +253,25 @@ async function activeTab() {
   return tab;
 }
 
-async function getRoom(limit, since = 0) {
+async function runInTab(func, args) {
   const tab = await activeTab();
   if (!tab?.id || !/^https?:/.test(tab.url ?? "")) return { error: "no-tab" };
   try {
-    const [res] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: "MAIN",
-      func: extractRoom,
-      args: [limit, since],
-    });
-    const room = res?.result ?? { error: "empty" };
-    if (!room.error) {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func, args });
+    const out = res?.result ?? { error: "empty" };
+    if (!out.error) {
       const u = new URL(tab.url);
-      room.base = u.origin + u.pathname + u.search;
-      registerRefs(room);
+      out.base = u.origin + u.pathname + u.search;
     }
-    return room;
+    return out;
   } catch (e) {
     return { error: "inject", origin: new URL(tab.url).origin, message: String(e.message ?? e) };
   }
+}
+
+// callers register refs once they know the room is the chat's
+function getRoom(limit, since = 0) {
+  return runInTab(extractRoom, [limit, since]);
 }
 
 async function refreshInfo() {
@@ -210,6 +281,7 @@ async function refreshInfo() {
   roomReady = !r.error;
   for (const b of $("quick").children) b.disabled = !roomReady;
   if (roomReady && r.roomId !== seen?.roomId) seen = { roomId: r.roomId, readTs: r.readTs };
+  if (roomReady && r.roomId !== chat.roomId) await switchChat(r.roomId);
   if (r.error === "inject") el.info.textContent = `no access to ${r.origin}`;
   else if (r.error === "no-client") el.info.textContent = "not an Element tab (no Matrix client)";
   else if (r.error === "no-room") el.info.textContent = "open a room";
@@ -233,8 +305,10 @@ function toolSentence(names) {
   const parts = [
     ...(web.length ? [`use ${web.join("/")} for current or external facts`] : []),
     ...(names.includes("get_older_messages") ? ["get_older_messages for earlier room history"] : []),
+    ...(names.includes("search_room") ? ["search_room to find messages on a topic anywhere in the room's history"] : []),
   ];
-  return parts.length ? ` You have tools: ${parts.join(" and ")}, only when needed.` : "";
+  const list = parts.length > 2 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts.join(" and ");
+  return parts.length ? ` You have tools: ${list}, only when needed.` : "";
 }
 
 function systemPrompt(room, toolNames) {
@@ -262,15 +336,7 @@ function systemPrompt(room, toolNames) {
       `notes on consecutive parts, oldest first, each answering the request for that part only:\n\n${room.parts.join("\n\n")}`
     );
   }
-  const budget = roomBudget();
-  const lines = [];
-  let used = 0;
-  for (let i = room.messages.length - 1; i >= 0; i--) {
-    const line = formatMsg(room.messages[i]);
-    if (used + line.length > budget) break;
-    lines.unshift(line);
-    used += line.length;
-  }
+  const lines = fitLines(room.messages, roomBudget());
   // say outright that a window is complete; left to compare timestamps, models report it as empty
   const what =
     room.since && lines.length === room.messages.length
@@ -281,6 +347,19 @@ function systemPrompt(room, toolNames) {
 
 function roomBudget() {
   return Math.floor(effectiveCtx() * 3 * 0.6);
+}
+
+// the newest messages that fit, formatted, oldest first
+function fitLines(messages, budget) {
+  const lines = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const line = formatMsg(messages[i]);
+    if (used + line.length > budget) break;
+    lines.unshift(line);
+    used += line.length;
+  }
+  return lines;
 }
 
 function weekStart(m) {
@@ -356,7 +435,7 @@ async function summarizeParts(room, task, status) {
       cached++;
       chrome.storage.local.set({ [key]: { ...hit, at: Date.now() } });
     } else {
-      status.textContent = `${room.messages.length} messages in ${chunks.length} parts: working on part ${i + 1} (${period})…`;
+      setText(status, `${room.messages.length} messages in ${chunks.length} parts: working on part ${i + 1} (${period})…`);
       const result = await streamChat(
         [
           { role: "system", content: systemPrompt({ ...room, messages: part, since: 0, parts: null }, null) },
@@ -370,7 +449,7 @@ async function summarizeParts(room, task, status) {
     }
     parts.push(`Part ${i + 1} (${period}):\n${text}`);
   }
-  status.textContent = `${room.messages.length} messages in ${chunks.length} parts${cached ? `, ${cached} reused from cache` : ""}`;
+  setText(status, `${room.messages.length} messages in ${chunks.length} parts${cached ? `, ${cached} reused from cache` : ""}`);
   if (parts.join("\n\n").length > budget) {
     addMsg("error", "The part notes do not fit the context window, so the start of the period may be cut off. Raise it in Settings.");
   }
@@ -459,19 +538,58 @@ const OLDER_TOOL = {
   },
 };
 
+const SEARCH_TOOL = {
+  type: "function",
+  function: {
+    name: "search_room",
+    description:
+      "Search the whole history of the current Element room for messages containing all the given words. Use when the user asks about something that may have been discussed before the messages you can see. Use one to three distinctive words; try synonyms or other languages in separate searches.",
+    parameters: {
+      type: "object",
+      properties: { query: { type: "string", description: "Words that must all appear in a message" } },
+      required: ["query"],
+    },
+  },
+};
+
+const SEARCH_HITS = 20;
+
 async function getOlderMessages(ctx, count) {
   const n = Math.min(Math.max(Math.floor(count) || 50, 1), 100);
   const r = await getRoom(ctx.skip + n);
   if (r.error) throw new Error(r.error);
+  if (r.roomId !== ctx.room.roomId) throw new Error("the open room changed");
+  registerRefs(r);
   const older = r.messages.slice(0, Math.max(0, r.messages.length - ctx.skip));
   ctx.skip += older.length;
   return older.length ? older.map(formatMsg).join("\n") : "No older messages.";
+}
+
+// The result always says how far back it looked; without that, models read
+// "no matches" as "never discussed".
+async function findMessages(ctx, query) {
+  const q = query.trim();
+  if (!q) throw new Error("query is empty");
+  const r = await runInTab(searchRoom, [ctx.room.roomId, q, SEARCH_HITS]);
+  if (r.error) throw new Error(r.error);
+  registerRefs(r);
+  const lines = fitLines(r.messages, MAX_TOOL_OUTPUT);
+  const scope = r.capped
+    ? `since ${formatTime(r.back)} (older history was not searched)`
+    : "in the room's whole history";
+  if (!lines.length) return `No messages ${scope} contain all of: ${q}. Try other or fewer words.`;
+  const head =
+    r.more || lines.length < r.messages.length
+      ? `The newest ${lines.length} messages containing all of: ${q} (older ones may exist; narrow the words to find them)`
+      : `${lines.length === 1 ? "The only message" : `All ${lines.length} messages`} ${scope} containing all of: ${q}`;
+  return `${head}. Oldest first:\n${lines.join("\n")}`;
 }
 
 async function runTool(name, args, ctx) {
   if (name === "web_search") return webSearch(String(args?.query ?? ""));
   if (name === "fetch_url") return fetchUrl(String(args?.url ?? ""));
   if (name === "get_older_messages" && ctx.room) return getOlderMessages(ctx, Number(args?.count));
+  if (name === "search_room" && ctx.room) return findMessages(ctx, String(args?.query ?? ""));
   throw new Error(`unknown tool ${name}`);
 }
 
@@ -520,11 +638,17 @@ async function streamChat(messages, tools, onText) {
   return { content, toolCalls };
 }
 
-function addStats(div, t0, firstAt, text) {
+function addStats(div, t0, firstAt) {
   const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
+  const entry = entries.get(div);
+  entry.stats = `first token ${firstAt === null ? "n/a" : secs(firstAt - t0)} · total ${secs(performance.now() - t0)}`;
+  renderStats(div, entry);
+}
+
+function renderStats(div, entry) {
   const stats = document.createElement("div");
   stats.className = "stats";
-  stats.textContent = `first token ${firstAt === null ? "n/a" : secs(firstAt - t0)} · total ${secs(performance.now() - t0)}`;
+  stats.textContent = entry.stats;
   const copy = document.createElement("button");
   copy.type = "button";
   copy.className = "copy";
@@ -532,7 +656,7 @@ function addStats(div, t0, firstAt, text) {
   copy.title = "Copy as Markdown with message links";
   copy.addEventListener("click", async () => {
     try {
-      await navigator.clipboard.writeText(toMarkdown(text));
+      await navigator.clipboard.writeText(toMarkdown(entry.text));
       copy.textContent = "Copied";
     } catch {
       copy.textContent = "Copy failed";
@@ -550,7 +674,8 @@ async function ask(text, opts = null) {
   const t0 = performance.now();
   let firstAt = null;
   let lastOut = null;
-  let lastText = "";
+  // Clear may swap the chat mid-answer; the rest of this answer stays with the old one
+  const { history } = chat;
   addMsg("user", text);
   history.push({ role: "user", content: text });
   abort = new AbortController();
@@ -562,13 +687,22 @@ async function ask(text, opts = null) {
     if (opts || cfg.useCtx) {
       if (opts?.since) status = addMsg("tool", `loading messages since ${formatTime(opts.since)}…`);
       room = await getRoom(opts?.since ? MAX_WINDOW_MSGS : cfg.maxMsgs, opts?.since ?? 0);
-      const err = room.error ?? (opts?.roomId && room.roomId !== opts.roomId ? "the room changed, try again" : null);
-      if (err && opts) {
+      if (room.error && opts) {
         history.pop();
-        addMsg("error", `Needs the open room (${err}).`);
+        addMsg("error", `Needs the open room (${room.error}).`);
         return;
       }
-      if (room.error) addMsg("error", `No room context (${room.error}); answering without it.`);
+      if (room.error) {
+        addMsg("error", `No room context (${room.error}); answering without it.`);
+      } else if (room.roomId !== chat.roomId || (opts?.roomId && room.roomId !== opts.roomId)) {
+        // the tab moved to another room before the panel noticed
+        history.pop();
+        addMsg("error", "The open room changed; ask again.");
+        switchLater = true;
+        return;
+      } else {
+        registerRefs(room);
+      }
     }
 
     const ctx = { room: room && !room.error ? room : null, skip: room?.messages?.length ?? 0 };
@@ -582,7 +716,7 @@ async function ask(text, opts = null) {
       }
       if (opts.since) {
         r.since = opts.since;
-        status.textContent = `${r.messages.length} messages${opts.mentions ? " addressed to you" : ""}${since}`;
+        setText(status, `${r.messages.length} messages${opts.mentions ? " addressed to you" : ""}${since}`);
       }
       if (!r.messages.length) {
         const reply =
@@ -598,7 +732,7 @@ async function ask(text, opts = null) {
       if (r.truncated) addMsg("error", `Could not load the whole period; this covers messages from ${formatTime(first.ts)} on.`);
       if (opts.since) r.parts = await summarizeParts(r, opts.task, status);
     }
-    const tools = opts?.since ? [] : [...(cfg.useTools ? TOOLS : []), ...(ctx.room ? [OLDER_TOOL] : [])];
+    const tools = opts?.since ? [] : [...(cfg.useTools ? TOOLS : []), ...(ctx.room ? [OLDER_TOOL, SEARCH_TOOL] : [])];
     let useTools = tools.length > 0;
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       let out = null;
@@ -606,8 +740,7 @@ async function ask(text, opts = null) {
         firstAt ??= performance.now();
         out ??= addMsg("assistant", "");
         lastOut = out;
-        lastText = t;
-        out.innerHTML = renderMarkdown(t);
+        setText(out, t);
         el.log.scrollTop = el.log.scrollHeight;
       };
       let result;
@@ -648,9 +781,14 @@ async function ask(text, opts = null) {
   } catch (e) {
     if (e.name !== "AbortError") addMsg("error", `Request failed: ${e.message}`);
   } finally {
-    if (lastOut) addStats(lastOut, t0, firstAt, lastText);
+    if (lastOut) addStats(lastOut, t0, firstAt);
     abort = null;
     el.send.textContent = "Send";
+    saveChat();
+    if (switchLater) {
+      switchLater = false;
+      refreshInfo();
+    }
   }
 }
 
@@ -753,10 +891,10 @@ $("forget").addEventListener("click", async () => {
   $("forget").textContent = `Forgot ${keys.length} cached part summaries`;
 });
 $("clear").addEventListener("click", () => {
-  history = [];
-  refs.clear();
-  refsByNum.clear();
+  abort?.abort();
+  chat = newChat(chat.roomId);
   el.log.replaceChildren();
+  saveChat();
 });
 $("use-ctx").addEventListener("change", (e) => save({ useCtx: e.target.checked }));
 $("use-tools").addEventListener("change", (e) => save({ useTools: e.target.checked }));
@@ -790,5 +928,5 @@ chrome.tabs.onUpdated.addListener((_id, change) => {
 await loadCfg();
 renderButtons();
 prunePartCache();
+await refreshInfo();
 await loadModels();
-refreshInfo();

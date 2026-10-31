@@ -116,3 +116,91 @@ export async function extractRoom(limit, since = 0) {
     readTs,
   };
 }
+
+// Also injected, so also self-contained. The server's search index covers the
+// whole history but only of unencrypted rooms; encrypted history is paged and
+// matched here, newest first, up to a page cap.
+export async function searchRoom(roomId, query, limit) {
+  const peg = window.mxMatrixClientPeg;
+  const client =
+    (peg && (peg.safeGet?.() ?? peg.get?.() ?? peg.matrixClient)) || null;
+  const room = client?.getRoom(roomId);
+  if (!room) return { error: "the room is no longer available" };
+
+  const isMessage = (e) =>
+    e.getType() === "m.room.message" &&
+    !e.isRedacted() &&
+    !e.isDecryptionFailure?.() &&
+    typeof e.getContent().body === "string";
+  const mapper = client.getEventMapper();
+  let found = [];
+  let server = false;
+  let more = false;
+  let capped = false;
+  let back;
+
+  if (!room.currentState?.getStateEvents("m.room.encryption", "") && client.search) {
+    try {
+      let next;
+      do {
+        const res = await client.search({
+          body: {
+            search_categories: {
+              room_events: { search_term: query, filter: { rooms: [roomId], limit }, order_by: "recent" },
+            },
+          },
+          next_batch: next,
+        });
+        const cat = res.search_categories?.room_events ?? {};
+        found.push(...(cat.results ?? []).map((r) => mapper(r.result)).filter(isMessage));
+        next = cat.next_batch;
+      } while (next && found.length < limit);
+      server = true;
+      more = !!next || found.length > limit;
+    } catch {
+      // no usable server search: scan instead
+      found = [];
+    }
+  }
+
+  if (!server) {
+    const fold = (s) => s.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
+    const words = fold(query).replace(/"/g, " ").split(/\s+/).filter(Boolean);
+    let from = null;
+    let start = false;
+    for (let i = 0; i < 30 && found.length < limit && !start; i++) {
+      const page = await client.createMessagesRequest(roomId, from, 100, "b");
+      const batch = (page.chunk || []).map(mapper);
+      await Promise.all(batch.map((e) => client.decryptEventIfNeeded?.(e)));
+      for (const e of batch.filter(isMessage)) {
+        back = e.getTs();
+        const body = fold(e.getContent().body);
+        if (words.every((w) => body.includes(w))) found.push(e);
+      }
+      from = page.end;
+      start = !from || !batch.length;
+    }
+    more = found.length > limit || (found.length === limit && !start);
+    capped = !start && found.length < limit;
+  }
+
+  const senderOf = (e) => e.sender?.name || e.getSender();
+  const messages = found
+    .slice(0, limit)
+    .reverse()
+    .map((e) => {
+      const content = e.getContent();
+      const replyTo = content["m.relates_to"]?.["m.in_reply_to"]?.event_id;
+      let body = content.body;
+      if (replyTo && body.startsWith("> ")) body = body.replace(/^(?:>.*(?:\n|$))+\n*/, "") || body;
+      const parent = replyTo && room.findEventById?.(replyTo);
+      return {
+        id: e.getId(),
+        ts: e.getTs(),
+        sender: senderOf(e),
+        body,
+        ...(replyTo ? { replyTo, replyToSender: parent ? senderOf(parent) : undefined } : {}),
+      };
+    });
+  return { roomId, messages, server, more, capped, back };
+}

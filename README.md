@@ -26,7 +26,7 @@ First questions in a long room can be slow on modest hardware because the whole 
 ## Usage
 
 - **Room context** checkbox: include recent messages of the open room in each question.
-- **Web tools** checkbox: let the model search the web, fetch pages and read older room history.
+- **Web tools** checkbox: let the model search the web and fetch pages. The room tools (older messages, room search) are offered whenever room context is on.
 - **Quick buttons** above the input (always use the open room, regardless of the Room context checkbox):
   - **Unread**: what you missed since your read marker. Element moves the marker seconds after you open a room, so the panel remembers where it was when it first saw the room; keep the panel open while switching rooms.
   - **Day / Week / Month**: summary of the last 24 hours, 7 days or 30 days (week and month start at midnight).
@@ -35,7 +35,8 @@ First questions in a long room can be slow on modest hardware because the whole 
   - Edit the buttons in **Settings**, one per line: `label | period | prompt`, where period is empty (recent messages, like a normal question), `unread`, or days like `14d`, optionally with `mentions`; `{period}` in the prompt becomes the time span. Empty the box to restore the defaults.
 - **Copy** under an answer copies it as Markdown, with `#12` citations turned into message links.
 - **Message links**: answers cite room messages as `#12` links with a hover tooltip (sender, time). Clicking one jumps the Element tab to that message, so you can ask for a summary and read the parts that matter.
-- **Clear** resets the conversation; switching rooms keeps the chat but the next question uses the new room.
+- **One chat per room**: switching rooms in Element switches the conversation, and coming back to a room (even after closing the panel) brings its chat back. Chats are kept in memory only (`chrome.storage.session`) and are gone after a browser restart or when the extension is reloaded or updated. While an answer is streaming the panel stays on its room and switches when it ends.
+- **Clear** empties the current room's chat (and stops an answer in progress).
 
 ## How it works
 
@@ -52,6 +53,7 @@ The model can call (toggle "Web tools" in the panel; models without tool support
 - `web_search` — Brave Search HTML results, no API key (DuckDuckGo blocks extension requests)
 - `fetch_url` — page text, truncated to 8k chars
 - `get_older_messages` — back-paginates the room via the Matrix client for history beyond the initial window
+- `search_room` — finds messages containing all the given words. Unencrypted rooms use the homeserver's search index, which covers the whole history; encrypted rooms are not indexed, so the newest 3000 events are paged and matched locally. The result always says how far back it looked, so the model does not mistake "not found in the last month" for "never discussed".
 
 The extension requests `https://*/*` host access so `fetch_url` and Element on any host work.
 

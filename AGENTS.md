@@ -6,7 +6,7 @@ Igor is a Manifest V3 Chrome extension: a side-panel chat with a local Ollama mo
 
 - `manifest.json` — permissions, side panel, service worker
 - `src/background.js` — opens the side panel on toolbar click
-- `src/extract.js` — `extractRoom(limit)`; injected into the Element tab with `world: "MAIN"`, so it must stay self-contained (no imports, no closures over module state)
+- `src/extract.js` — `extractRoom(limit, since)` and `searchRoom(roomId, query, limit)`; injected into the Element tab with `world: "MAIN"`, so each must stay self-contained (no imports, no shared helpers, no closures over module state)
 - `src/panel.{html,css,js}` — chat UI, model picker, Ollama streaming, tool-call loop, web tools
 
 ## Conventions
@@ -24,7 +24,9 @@ Igor is a Manifest V3 Chrome extension: a side-panel chat with a local Ollama mo
 - DuckDuckGo blocks extension-originated requests (202/403 bot check); web search uses Brave's HTML results. A blocked search must return an error to the model, never an empty result.
 - Models without tool support error with "does not support tools"; the loop retries without tools.
 - Element advances `m.fully_read` seconds after a room is shown, so the Unread button uses the marker the panel saw when the room first appeared (`seen` in `panel.js`).
-- Cached part summaries (`part:<sha256>` keys in `chrome.storage.local`) store `#{$eventId}` instead of `[#N]`: ref numbers only live as long as the panel.
+- Cached part summaries (`part:<sha256>` keys in `chrome.storage.local`) store `#{$eventId}` instead of `[#N]`: ref numbers only live as long as the room's chat.
+- Chats are per room (`chat:<roomId>` in `chrome.storage.session`: memory only, wiped by a browser restart or an extension reload), and so are `[#N]` refs. `getRoom` does not register refs; callers do, after checking the room is the chat's. A room switch during a streaming answer is deferred until it ends.
+- Server-side search (`client.search`) silently returns nothing for encrypted rooms, so `searchRoom` branches on the `m.room.encryption` state event, not on empty results, and pages encrypted history itself.
 
 ## Testing
 
