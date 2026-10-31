@@ -15,8 +15,6 @@
   </header>
 
   <div id="ctxbar">
-    <label><input type="checkbox" id="use-ctx" checked> Room context</label>
-    <label><input type="checkbox" id="use-tools" checked> Web tools</label>
     <span id="ctx-info">no room yet</span>
     <button id="grant" hidden>Allow this site</button>
   </div>
@@ -28,6 +26,10 @@
   <form id="form">
     <textarea id="input" rows="2" placeholder="Ask Igor about this room…"></textarea>
     <button id="send" type="submit">Send</button>
+    <div id="send-opts">
+      <label title="Send the open room's recent messages with each question; the quick buttons always do"><input type="checkbox" id="use-ctx" checked> Room context</label>
+      <label title="Let the model search the web and fetch pages"><input type="checkbox" id="use-tools" checked> Web tools</label>
+    </div>
   </form>
 
   <details id="settings">

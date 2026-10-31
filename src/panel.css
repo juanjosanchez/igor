@@ -14,7 +14,8 @@ header select { flex: 1; min-width: 0; }
 .msg code { font-family: ui-monospace, monospace; }
 #quick { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 8px 0; border-top: 1px solid #8884; font-size: 12px; }
 #quick[hidden] { display: none; }
-#form { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #8884; }
+#form { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border-top: 1px solid #8884; }
+#send-opts { flex-basis: 100%; display: flex; gap: 12px; font-size: 12px; opacity: .8; }
 #quick:not([hidden]) + #form { border-top: none; }
 #input { flex: 1; resize: vertical; }
 #settings { padding: 4px 8px 8px; border-top: 1px solid #8884; font-size: 12px; }

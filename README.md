@@ -25,7 +25,7 @@ First questions in a long room can be slow on modest hardware because the whole 
 
 ## Usage
 
-- **Room context** checkbox: include recent messages of the open room in each question.
+- **Room context** checkbox (under the input, like **Web tools**; both only affect typed questions): include recent messages of the open room in each question.
 - **Web tools** checkbox: let the model search the web and fetch pages. The room tools (older messages, room search) are offered whenever room context is on.
 - **Quick buttons** above the input (always use the open room, regardless of the Room context checkbox):
   - **Unread**: what you missed since your read marker. Element moves the marker seconds after you open a room, so the panel remembers where it was when it first saw the room; keep the panel open while switching rooms.
