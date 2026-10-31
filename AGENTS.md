@@ -8,6 +8,7 @@ Igor is a Manifest V3 Chrome extension: a side-panel chat with a local Ollama mo
 - `src/background.js` — opens the side panel on toolbar click
 - `src/extract.js` — `extractRoom(limit, since)` and `searchRoom(roomId, query, limit)`; injected into the Element tab with `world: "MAIN"`, so each must stay self-contained (no imports, no shared helpers, no closures over module state)
 - `src/panel.{html,css,js}` — chat UI, model picker, Ollama streaming, tool-call loop, web tools
+- `tests/` — Node tests for the injected functions, and a browser harness that runs the real panel against fakes
 
 ## Conventions
 
@@ -30,7 +31,10 @@ Igor is a Manifest V3 Chrome extension: a side-panel chat with a local Ollama mo
 
 ## Testing
 
-No unit-test harness yet. Manual loop:
+- `node tests/extract.test.mjs` and `node tests/search.test.mjs` run `extractRoom` and `searchRoom` against a fake Matrix client (pass a path to test another copy of `extract.js`).
+- `python3 tests/harness/serve.py [port]` serves `src/` with `tests/harness/stub.js` injected into `panel.html`: fake `chrome.*` APIs (`storage.session` survives a reload, like a panel reopen), a fake Element client with an unencrypted room (server search) and an encrypted one (`!enc:example.org`), and a fake Ollama that answers with what it was given. Open `http://localhost:8765/src/panel.html` and drive the real panel; `__switchRoom(id)` moves the fake tab, `__chats` holds the requests sent to Ollama. It checks plumbing, not answer quality.
+
+Against real Element, manually:
 
 1. Branded Chrome 137+ ignores `--load-extension`, and 136+ ignores `--remote-debugging-port` on the default profile (devtools `--autoConnect` then 403s or opens its own blank browser). Use a dedicated profile with `--remote-debugging-port=9223 --user-data-dir=<dir>`, log in to Element there manually, then Load unpacked from `chrome://extensions` and drive it over CDP on that port.
 2. The side panel can't be driven over CDP. Open `chrome-extension://<id>/src/panel.html?tab=<element-tab-id>` as a normal tab; the `?tab=` override makes the panel target that tab. Get the tab id via `chrome.tabs.query` from the extension service worker.

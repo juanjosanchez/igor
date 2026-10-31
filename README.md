@@ -63,6 +63,7 @@ The extension requests `https://*/*` host access so `fetch_url` and Element on a
 - `src/panel.*` — side panel UI
 - `src/extract.js` — room extraction (injected into the page)
 - `src/background.js` — opens the panel on icon click
+- `tests/` — Node tests and a browser harness with fake Chrome, Element and Ollama (see AGENTS.md)
 
 ## Benchmarks
 
