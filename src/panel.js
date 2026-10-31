@@ -426,7 +426,7 @@ async function summarizeParts(room, task, status) {
   for (const [i, part] of chunks.entries()) {
     const period = `${formatTime(part[0].ts)} to ${formatTime(part.at(-1).ts)}`;
     const request =
-      `These messages (${period}) are one part of a longer period. Answer the request below for this part only, ` +
+      `These ${part.length} messages (${period}) are one part of a longer period. Answer the request below for this part only, ` +
       `as bullet points in at most ${words} words, citing messages. If nothing here is relevant, reply "Nothing relevant."\n\n` +
       `Request: ${task}`;
     const key = await partKey(request, part);
@@ -603,7 +603,8 @@ async function streamChat(messages, tools, onText) {
       model: el.model.value,
       stream: true,
       think: false,
-      options: { num_ctx: effectiveCtx() },
+      // sampled answers differ run to run, sometimes wrongly; the benchmarks also use 0
+      options: { num_ctx: effectiveCtx(), temperature: 0 },
       messages,
       ...(tools && { tools }),
     }),
@@ -678,8 +679,9 @@ async function ask(text, opts = null) {
   let lastOut = null;
   // Clear may swap the chat mid-answer; the rest of this answer stays with the old one
   const { history } = chat;
-  addMsg("user", text);
-  history.push({ role: "user", content: text });
+  const shown = addMsg("user", text);
+  const question = { role: "user", content: text };
+  history.push(question);
   abort = new AbortController();
   el.send.textContent = "Stop";
 
@@ -732,6 +734,11 @@ async function ask(text, opts = null) {
         return;
       }
       if (r.truncated) addMsg("error", `Could not load the whole period; this covers messages from ${formatTime(first.ts)} on.`);
+      // a count in the request itself; given only timestamps, models now and then report a window as empty
+      if (opts.since) {
+        question.content += ` There are ${r.messages.length} messages${opts.mentions ? " addressed to me" : ""} in this period.`;
+        setText(shown, question.content);
+      }
       if (opts.since) r.parts = await summarizeParts(r, opts.task, status);
     }
     const tools = opts?.since ? [] : [...(cfg.useTools ? TOOLS : []), ...(ctx.room ? [OLDER_TOOL, SEARCH_TOOL] : [])];

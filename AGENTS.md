@@ -20,7 +20,7 @@ Igor is a Manifest V3 Chrome extension: a side-panel chat with a local Ollama mo
 
 - Room context uses Element's internal `window.mxMatrixClientPeg`; it may change between Element versions. History is fetched via `createMessagesRequest` because the live timeline can be a short window with no back token.
 - Ollama must allow extension origins (`OLLAMA_ORIGINS=chrome-extension://*`), otherwise requests get 403.
-- Chat requests send `think: false` and an explicit `options.num_ctx`; without it Ollama silently truncates long room dumps.
+- Chat requests send `think: false`, `options.temperature: 0` and an explicit `options.num_ctx`; without `num_ctx` Ollama silently truncates long room dumps, and at gemma4's default temperature (1) the same request sometimes comes back wrong (e.g. a window with messages reported as empty).
 - DuckDuckGo blocks extension-originated requests (202/403 bot check); web search uses Brave's HTML results. A blocked search must return an error to the model, never an empty result.
 - Models without tool support error with "does not support tools"; the loop retries without tools.
 - Element advances `m.fully_read` seconds after a room is shown, so the Unread button uses the marker the panel saw when the room first appeared (`seen` in `panel.js`).
