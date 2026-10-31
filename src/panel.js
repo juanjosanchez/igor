@@ -151,9 +151,11 @@ function addMsg(role, text) {
 }
 
 // shown, but not kept with the room's chat
-function notice(text) {
-  el.log.append(renderEntry({ role: "error", text }));
+function notice(text, role = "error") {
+  const div = renderEntry({ role, text });
+  el.log.append(div);
   el.log.scrollTop = el.log.scrollHeight;
+  return div;
 }
 
 function saveChat() {
@@ -279,7 +281,7 @@ async function refreshInfo() {
   el.grant.hidden = r.error !== "inject";
   el.grant.dataset.origin = r.origin ?? "";
   roomReady = !r.error;
-  for (const b of $("quick").children) b.disabled = !roomReady;
+  for (const b of [...$("quick").children, $("search")]) b.disabled = !roomReady;
   if (roomReady && r.roomId !== seen?.roomId) seen = { roomId: r.roomId, readTs: r.readTs };
   if (roomReady && r.roomId !== chat.roomId) await switchChat(r.roomId);
   if (r.error === "inject") el.info.textContent = `no access to ${r.origin}`;
@@ -567,10 +569,10 @@ async function getOlderMessages(ctx, count) {
 
 // The result always says how far back it looked; without that, models read
 // "no matches" as "never discussed".
-async function findMessages(ctx, query) {
+async function findMessages(roomId, query) {
   const q = query.trim();
   if (!q) throw new Error("query is empty");
-  const r = await runInTab(searchRoom, [ctx.room.roomId, q, SEARCH_HITS]);
+  const r = await runInTab(searchRoom, [roomId, q, SEARCH_HITS]);
   if (r.error) throw new Error(r.error);
   registerRefs(r);
   const lines = fitLines(r.messages, MAX_TOOL_OUTPUT);
@@ -589,7 +591,7 @@ async function runTool(name, args, ctx) {
   if (name === "web_search") return webSearch(String(args?.query ?? ""));
   if (name === "fetch_url") return fetchUrl(String(args?.url ?? ""));
   if (name === "get_older_messages" && ctx.room) return getOlderMessages(ctx, Number(args?.count));
-  if (name === "search_room" && ctx.room) return findMessages(ctx, String(args?.query ?? ""));
+  if (name === "search_room" && ctx.room) return findMessages(ctx.room.roomId, String(args?.query ?? ""));
   throw new Error(`unknown tool ${name}`);
 }
 
@@ -641,7 +643,7 @@ async function streamChat(messages, tools, onText) {
 function addStats(div, t0, firstAt) {
   const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
   const entry = entries.get(div);
-  entry.stats = `first token ${firstAt === null ? "n/a" : secs(firstAt - t0)} · total ${secs(performance.now() - t0)}`;
+  entry.stats = `${firstAt === null ? "" : `first token ${secs(firstAt - t0)} · `}total ${secs(performance.now() - t0)}`;
   renderStats(div, entry);
 }
 
@@ -782,13 +784,41 @@ async function ask(text, opts = null) {
     if (e.name !== "AbortError") addMsg("error", `Request failed: ${e.message}`);
   } finally {
     if (lastOut) addStats(lastOut, t0, firstAt);
-    abort = null;
-    el.send.textContent = "Send";
-    saveChat();
-    if (switchLater) {
-      switchLater = false;
-      refreshInfo();
-    }
+    finish();
+  }
+}
+
+function finish() {
+  abort = null;
+  el.send.textContent = "Send";
+  saveChat();
+  if (switchLater) {
+    switchLater = false;
+    refreshInfo();
+  }
+}
+
+// Search without the model; the results join the chat so follow-up questions can use them
+async function searchInput() {
+  const q = el.input.value.trim();
+  if (!q || abort || !roomReady) return;
+  el.input.value = "";
+  const t0 = performance.now();
+  const { history } = chat;
+  addMsg("user", `Search: ${q}`);
+  abort = new AbortController();
+  el.send.textContent = "Stop";
+  const status = notice("searching…", "tool");
+  try {
+    const text = await findMessages(chat.roomId, q);
+    if (abort.signal.aborted) return;
+    addStats(addMsg("assistant", text), t0, null);
+    history.push({ role: "user", content: `Search this room for messages containing: ${q}` }, { role: "assistant", content: text });
+  } catch (e) {
+    addMsg("error", `Search failed: ${e.message}`);
+  } finally {
+    status.remove();
+    finish();
   }
 }
 
@@ -856,6 +886,7 @@ function runButton(spec) {
   });
 }
 
+$("search").addEventListener("click", searchInput);
 $("form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   if (abort) return abort.abort();

@@ -24,8 +24,11 @@
   <div id="quick"></div>
 
   <form id="form">
-    <textarea id="input" rows="2" placeholder="Ask Igor about this room…"></textarea>
-    <button id="send" type="submit">Send</button>
+    <textarea id="input" rows="2" placeholder="Ask Igor about this room, or search it…"></textarea>
+    <div id="actions">
+      <button id="send" type="submit">Send</button>
+      <button id="search" type="button" disabled title="List this room's messages that contain all these words, without asking the model">Search</button>
+    </div>
     <div id="send-opts">
       <label title="Send the open room's recent messages with each question; the quick buttons always do"><input type="checkbox" id="use-ctx" checked> Room context</label>
       <label title="Let the model search the web and fetch pages"><input type="checkbox" id="use-tools" checked> Web tools</label>
