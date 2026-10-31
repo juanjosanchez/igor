@@ -23,6 +23,8 @@ Igor is a Manifest V3 Chrome extension: a side-panel chat with a local Ollama mo
 - Chat requests send `think: false` and an explicit `options.num_ctx`; without it Ollama silently truncates long room dumps.
 - DuckDuckGo blocks extension-originated requests (202/403 bot check); web search uses Brave's HTML results. A blocked search must return an error to the model, never an empty result.
 - Models without tool support error with "does not support tools"; the loop retries without tools.
+- Element advances `m.fully_read` seconds after a room is shown, so the Unread button uses the marker the panel saw when the room first appeared (`seen` in `panel.js`).
+- Cached part summaries (`part:<sha256>` keys in `chrome.storage.local`) store `#{$eventId}` instead of `[#N]`: ref numbers only live as long as the panel.
 
 ## Testing
 

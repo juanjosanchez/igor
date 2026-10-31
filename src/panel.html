@@ -23,6 +23,8 @@
 
   <main id="log"></main>
 
+  <div id="quick"></div>
+
   <form id="form">
     <textarea id="input" rows="2" placeholder="Ask Igor about this room…"></textarea>
     <button id="send" type="submit">Send</button>
@@ -33,6 +35,11 @@
     <label>Ollama URL <input id="base-url" type="text"></label>
     <label>Context window (tokens) <small id="ctx-max"></small> <input id="num-ctx" type="number" min="2048" step="1024"></label>
     <label>Max room messages <input id="max-msgs" type="number" min="10" step="10"></label>
+    <label>Quick buttons, one per line: <code>label | period | prompt</code>
+      <textarea id="buttons" rows="6" spellcheck="false"></textarea></label>
+    <small>Period: empty for the recent messages, <code>unread</code> (since your read marker) or days like <code>7d</code>; add <code>mentions</code> to keep only messages addressed to you. <code>{period}</code> in the prompt becomes the time span. Empty the box to restore the defaults.</small>
+    <small id="buttons-note"></small>
+    <button type="button" id="forget">Forget cached part summaries</button>
   </details>
 
   <script type="module" src="panel.js"></script>
