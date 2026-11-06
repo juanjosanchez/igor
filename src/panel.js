@@ -41,7 +41,7 @@ let switchLater = false;
 const entries = new WeakMap();
 
 function newChat(roomId) {
-  return { roomId, history: [], log: [], refs: new Map(), refsByNum: new Map(), next: 1 };
+  return { roomId, history: [], log: [], refs: new Map(), refsByNum: new Map(), next: 1, urls: new Set() };
 }
 
 async function loadCfg() {
@@ -82,6 +82,29 @@ function registerRefs(room) {
   const inWindow = new Set(room.messages.map((m) => m.id));
   for (const m of room.messages) {
     if (m.replyTo) m.replyRef = inWindow.has(m.replyTo) ? chat.refs.get(m.replyTo)?.n : undefined;
+    noteUrls(m.body);
+  }
+}
+
+// fetch_url only opens links the user wrote, the room's messages hold or a
+// search returned. Room text can tell the model to fetch a URL it builds
+// itself, with the room's messages in it.
+function normUrl(u) {
+  try {
+    const x = new URL(u);
+    x.hash = "";
+    return x.href.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function noteUrls(text) {
+  for (const raw of text.match(/https?:\/\/[^\s<>"'`]+/gi) ?? []) {
+    for (const u of [raw, raw.replace(/[.,;:!?)\]}*_]+$/, "")]) {
+      const n = normUrl(u);
+      if (n) chat.urls.add(n);
+    }
   }
 }
 
@@ -172,6 +195,7 @@ function saveChat() {
     log: chat.log,
     refs: [...chat.refs.values()].filter((r) => cited.has(r.n)),
     next: chat.next,
+    urls: [...chat.urls],
   };
   chrome.storage.session.set({ [key]: value }).catch(async () => {
     // over the session quota: drop the other rooms' chats
@@ -193,7 +217,7 @@ async function switchChat(roomId) {
   saveChat();
   chat = newChat(roomId);
   if (saved) {
-    Object.assign(chat, { history: saved.history, log: saved.log, next: saved.next });
+    Object.assign(chat, { history: saved.history, log: saved.log, next: saved.next, urls: new Set(saved.urls) });
     for (const r of saved.refs) {
       chat.refs.set(r.id, r);
       chat.refsByNum.set(r.n, r);
@@ -507,7 +531,9 @@ async function webSearch(query) {
   const results = [...doc.querySelectorAll(".snippet[data-type=web]")].slice(0, 6).map((r) => {
     const title = (r.querySelector(".title") ?? r.querySelector("a"))?.textContent.trim();
     const desc = r.querySelector(".content, .snippet-description, .generic-snippet")?.textContent.trim() ?? "";
-    return `${title}\n${r.querySelector("a")?.href}\n${desc}`;
+    const href = r.querySelector("a")?.href;
+    noteUrls(href ?? "");
+    return `${title}\n${href}\n${desc}`;
   });
   if (!results.length) throw new Error("search returned no parseable results (possible bot check)");
   return results.join("\n\n");
@@ -515,7 +541,8 @@ async function webSearch(query) {
 
 async function fetchUrl(url) {
   if (!/^https?:\/\//i.test(url)) throw new Error("url must be http(s)");
-  const res = await fetch(url);
+  // no cookies: a planted link must not act as the user on sites they are logged in to
+  const res = await fetch(url, { credentials: "omit" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   let text = await res.text();
   if ((res.headers.get("content-type") ?? "").includes("html")) {
@@ -589,7 +616,14 @@ async function findMessages(roomId, query) {
 
 async function runTool(name, args, ctx) {
   if (name === "web_search") return webSearch(String(args?.query ?? ""));
-  if (name === "fetch_url") return fetchUrl(String(args?.url ?? ""));
+  if (name === "fetch_url") {
+    const url = String(args?.url ?? "");
+    if (!chat.urls.has(normUrl(url))) {
+      addMsg("error", `Did not open ${url}: only links from your messages, the room or search results can be fetched.`);
+      throw new Error("this link does not appear in the user's messages, the room or search results, so it cannot be fetched; ask the user for the link");
+    }
+    return fetchUrl(url);
+  }
   if (name === "get_older_messages" && ctx.room) return getOlderMessages(ctx, Number(args?.count));
   if (name === "search_room" && ctx.room) return findMessages(ctx.room.roomId, String(args?.query ?? ""));
   throw new Error(`unknown tool ${name}`);
@@ -680,6 +714,7 @@ async function ask(text, opts = null) {
   // Clear may swap the chat mid-answer; the rest of this answer stays with the old one
   const { history } = chat;
   const shown = addMsg("user", text);
+  noteUrls(text);
   const question = { role: "user", content: text };
   history.push(question);
   abort = new AbortController();
@@ -813,6 +848,7 @@ async function searchInput() {
   const t0 = performance.now();
   const { history } = chat;
   addMsg("user", `Search: ${q}`);
+  noteUrls(q);
   abort = new AbortController();
   el.send.textContent = "Stop";
   const status = notice("searching…", "tool");

