@@ -15,13 +15,13 @@ const DEFAULTS = {
   useCtx: true,
   useTools: true,
   buttons: DEFAULT_BUTTONS,
+  partDays: 60,
 };
 
 // Benchmarked on a Ryzen AI 9 iGPU: MoE 26b-a4b is ~2.5x faster than dense 12b at equal recall/tool-use quality
 const PREFERRED_MODELS = ["gemma4:26b-a4b-it-qat", "gemma4:e4b-it-qat"];
 
 const MAX_WINDOW_MSGS = 5000;
-const PART_TTL = 60 * 86400000;
 const REF_GROUP = /\[#\d+(?:\s*[-–,]\s*#?\d+)*\]/g;
 
 const $ = (id) => document.getElementById(id);
@@ -54,6 +54,7 @@ async function loadCfg() {
   $("use-ctx").checked = cfg.useCtx;
   $("use-tools").checked = cfg.useTools;
   $("buttons").value = cfg.buttons;
+  $("part-days").value = cfg.partDays;
 }
 
 function save(patch) {
@@ -500,8 +501,8 @@ async function summarizeParts(room, task, status) {
   const words = [200, 150, 100, 60, 40].find((w) => w * 7 * chunks.length <= budget) ?? 40;
   const parts = [];
   let cached = 0;
-  // local storage is plain text on disk, so encrypted rooms' summaries stay in memory
-  const store = room.encrypted ? chrome.storage.session : chrome.storage.local;
+  // local storage is plain text on disk: encrypted rooms' summaries, and all of them at 0 days, stay in memory
+  const store = room.encrypted || !cfg.partDays ? chrome.storage.session : chrome.storage.local;
   for (const [i, part] of chunks.entries()) {
     const period = `${formatTime(part[0].ts)} to ${formatTime(part.at(-1).ts)}`;
     const request =
@@ -540,7 +541,7 @@ async function summarizeParts(room, task, status) {
 async function prunePartCache() {
   const all = await chrome.storage.local.get(null);
   // entries without v: 2 predate keeping encrypted rooms' summaries in memory and may be from one
-  const old = Object.keys(all).filter((k) => k.startsWith("part:") && !(all[k]?.v === 2 && all[k].at > Date.now() - PART_TTL));
+  const old = Object.keys(all).filter((k) => k.startsWith("part:") && !(all[k]?.v === 2 && all[k].at > Date.now() - cfg.partDays * 86400000));
   if (old.length) await chrome.storage.local.remove(old);
 }
 
@@ -1060,6 +1061,12 @@ $("buttons").addEventListener("change", (e) => {
     save({ buttons: text });
   }
   renderButtons();
+});
+$("part-days").addEventListener("change", (e) => {
+  const days = Math.floor(Number(e.target.value));
+  save({ partDays: e.target.value !== "" && days >= 0 ? days : DEFAULTS.partDays });
+  e.target.value = cfg.partDays;
+  prunePartCache();
 });
 $("forget").addEventListener("click", async () => {
   let n = 0;
