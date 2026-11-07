@@ -1144,9 +1144,23 @@ el.input.addEventListener("keydown", (ev) => {
     $("form").requestSubmit();
   }
 });
+// keep_alive would leave the previous model loaded next to the new one
+async function unloadModel(name) {
+  try {
+    const { models } = await (await fetch(`${cfg.baseUrl}/api/ps`)).json();
+    if (models.some((m) => m.name === name)) {
+      await fetch(`${cfg.baseUrl}/api/generate`, { method: "POST", body: JSON.stringify({ model: name, keep_alive: 0 }) });
+    }
+  } catch {
+    // only frees memory early; Ollama unloads it anyway once keep_alive runs out
+  }
+}
+
 el.model.addEventListener("change", () => {
+  const previous = cfg.model;
   save({ model: el.model.value, modelPinned: true });
   loadModelLimit();
+  if (previous && previous !== el.model.value && !abort) unloadModel(previous);
 });
 $("refresh").addEventListener("click", loadModels);
 $("buttons").addEventListener("change", (e) => {
