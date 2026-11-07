@@ -16,6 +16,7 @@ const DEFAULTS = {
   useTools: true,
   buttons: DEFAULT_BUTTONS,
   partDays: 60,
+  keepAlive: 30,
 };
 
 // Benchmarked on a Ryzen AI 9 iGPU: MoE 26b-a4b is ~2.5x faster than dense 12b at equal recall/tool-use quality
@@ -55,6 +56,7 @@ async function loadCfg() {
   $("use-tools").checked = cfg.useTools;
   $("buttons").value = cfg.buttons;
   $("part-days").value = cfg.partDays;
+  $("keep-alive").value = cfg.keepAlive;
 }
 
 function save(patch) {
@@ -754,6 +756,8 @@ async function streamChat(messages, tools, onText) {
       model: el.model.value,
       stream: true,
       think: false,
+      // Ollama's default unloads after 5 idle minutes; reloading costs seconds and the reusable work
+      keep_alive: `${cfg.keepAlive}m`,
       // sampled answers differ run to run, sometimes wrongly; the benchmarks also use 0
       options: { num_ctx: effectiveCtx(), temperature: 0 },
       messages,
@@ -1096,6 +1100,11 @@ $("buttons").addEventListener("change", (e) => {
     save({ buttons: text });
   }
   renderButtons();
+});
+$("keep-alive").addEventListener("change", (e) => {
+  const minutes = Math.floor(Number(e.target.value));
+  save({ keepAlive: minutes >= 1 ? minutes : DEFAULTS.keepAlive });
+  e.target.value = cfg.keepAlive;
 });
 $("part-days").addEventListener("change", (e) => {
   const days = Math.floor(Number(e.target.value));

@@ -40,6 +40,8 @@
     <label>Ollama URL <input id="base-url" type="text"></label>
     <label>Context window (tokens) <small id="ctx-max"></small> <input id="num-ctx" type="number" min="2048" step="1024"></label>
     <label>Max room messages <input id="max-msgs" type="number" min="10" step="10"></label>
+    <label>Keep the model loaded after an answer (minutes) <input id="keep-alive" type="number" min="1" step="5"></label>
+    <small>Ollama's own default is 5. A loaded model holds its memory (about 15 GB for gemma4:26b-a4b-it-qat); after it unloads, the next question waits for a reload and reads the room from scratch.</small>
     <label>Quick buttons, one per line: <code>label | period | prompt</code>
       <textarea id="buttons" rows="6" spellcheck="false"></textarea></label>
     <small>Period: empty for the recent messages, <code>unread</code> (since your read marker) or days like <code>7d</code>; add <code>mentions</code> to keep only messages addressed to you. <code>{period}</code> in the prompt becomes the time span. Empty the box to restore the defaults.</small>

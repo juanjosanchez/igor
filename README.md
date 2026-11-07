@@ -24,7 +24,7 @@ Updating: `git pull`, then click the reload icon on the Igor card in `chrome://e
 
 Ollama is expected at `http://localhost:11434`; change it under **Settings** in the panel. The extension requests `https://*/*` host access so it works on any Element host and `fetch_url` can read pages; narrow `host_permissions` in `manifest.json` if you only use one host.
 
-First questions in a long room can be slow on modest hardware because the whole context is processed. Lower **Max room messages** in Settings, or use a smaller or MoE model.
+First questions in a long room can be slow on modest hardware because the whole context is processed. Lower **Max room messages** in Settings, or use a smaller or MoE model. Follow-up questions are faster: Igor keeps the start of each request the same, so Ollama reuses its work on the room, and asks Ollama to keep the model loaded for 30 minutes after an answer instead of its default 5 (**Keep the model loaded** in Settings). A loaded model holds its memory the whole time.
 
 ## Usage
 
