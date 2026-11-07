@@ -44,7 +44,7 @@ let cutAt = 0;
 const entries = new WeakMap();
 
 function newChat(roomId) {
-  return { roomId, history: [], log: [], refs: new Map(), refsByNum: new Map(), next: 1, urls: new Set(), anchor: null };
+  return { roomId, history: [], log: [], refs: new Map(), refsByNum: new Map(), next: 1, urls: new Set(), anchor: null, pending: [] };
 }
 
 async function loadCfg() {
@@ -252,6 +252,7 @@ function saveChat() {
     next: chat.next,
     urls: [...chat.urls],
     anchor: chat.anchor,
+    pending: chat.pending,
   };
   chrome.storage.session.set({ [key]: value }).catch(async () => {
     // over the session quota: drop the other rooms' chats and the encrypted rooms' part summaries
@@ -273,7 +274,7 @@ async function switchChat(roomId) {
   saveChat();
   chat = newChat(roomId);
   if (saved) {
-    Object.assign(chat, { history: saved.history, log: saved.log, next: saved.next, urls: new Set(saved.urls), anchor: saved.anchor ?? null });
+    Object.assign(chat, { history: saved.history, log: saved.log, next: saved.next, urls: new Set(saved.urls), anchor: saved.anchor ?? null, pending: saved.pending ?? [] });
     for (const r of saved.refs) {
       chat.refs.set(r.id, r);
       chat.refsByNum.set(r.n, r);
@@ -636,6 +637,19 @@ function parseHtml(html) {
 const SNIPPET_NOTE =
   "These are only snippets. If they do not state the answer, open the most relevant result with fetch_url before answering.";
 
+// Pages and snippets are untrusted and long, so they leave the conversation
+// once the next answer is done: they cannot steer later answers or fill the
+// window, and a follow-up right after still has them (gemma rarely reopens a page).
+function trimWebResult(name, args, content) {
+  if (content.startsWith("Error")) return null;
+  if (name === "fetch_url") {
+    return `(The text of ${args?.url} was removed. Do not answer from memory: to answer anything else about this page, call fetch_url with that URL again.)`;
+  }
+  if (name !== "web_search") return null;
+  const links = content.split("\n\n").filter((b) => b !== SNIPPET_NOTE).map((b) => b.split("\n").slice(0, 2).join("\n"));
+  return `${links.join("\n\n")}\n\n(Snippets left out after the answer.)`;
+}
+
 async function webSearch(query) {
   const res = await fetch(`https://search.brave.com/search?q=${encodeURIComponent(query)}`);
   if (!res.ok) throw new Error(`search blocked or failed (HTTP ${res.status})`);
@@ -865,6 +879,8 @@ async function ask(text, opts = null) {
   let firstAt = null;
   let lastOut = null;
   let roomMs = null;
+  const trims = [];
+  let answered = false;
   cutAt = 0;
   // Clear may swap the chat mid-answer; the rest of this answer stays with the old one
   const { history } = chat;
@@ -933,6 +949,7 @@ async function ask(text, opts = null) {
               : `No messages in this room${since}.`;
         addMsg("assistant", reply);
         history.push({ role: "assistant", content: reply });
+        answered = true;
         return;
       }
       if (r.truncated) addMsg("error", `Could not load the whole period; this covers messages from ${formatTime(first.ts)} on.`);
@@ -973,7 +990,10 @@ async function ask(text, opts = null) {
 
       const msg = { role: "assistant", content: result.content };
       if (result.toolCalls.length) msg.tool_calls = result.toolCalls;
-      if (result.content || result.toolCalls.length) history.push(msg);
+      if (result.content || result.toolCalls.length) {
+        history.push(msg);
+        answered = true;
+      }
       if (!result.toolCalls.length) return;
 
       for (const call of result.toolCalls) {
@@ -986,12 +1006,19 @@ async function ask(text, opts = null) {
           content = `Error: ${e.message}`;
         }
         history.push({ role: "tool", tool_name: name, content });
+        const short = trimWebResult(name, args, content);
+        if (short) trims.push([history.length - 1, short]);
       }
     }
     addMsg("error", `Stopped after ${MAX_TOOL_ROUNDS} tool rounds without a final answer.`);
   } catch (e) {
     if (e.name !== "AbortError") addMsg("error", `Request failed: ${e.message}`);
   } finally {
+    // the previous answer's web results go now; this answer's stay for one more question
+    if (answered && chat.history === history) {
+      for (const [i, short] of chat.pending) if (history[i]) history[i].content = short;
+      chat.pending = trims;
+    }
     if (lastOut) addStats(lastOut, t0, firstAt, model, roomMs);
     if (cutAt) {
       addMsg(

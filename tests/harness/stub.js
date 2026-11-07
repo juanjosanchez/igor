@@ -152,6 +152,7 @@
       const page = html(`<p>Page text of ${u}</p>`);
       // a public page that redirects into the local network
       if (u.endsWith("/redirect-local")) Object.defineProperty(page, "url", { value: "http://127.0.0.1/admin" });
+      if (u.endsWith("/release")) return html("<h1>Release 4.2</h1><ol><li>Builds are 20% faster.</li><li>A new linter checks imports.</li><li>The code freeze is on 14 November.</li></ol>");
       return page;
     }
     if (u.startsWith("https://search.brave.com/")) {
