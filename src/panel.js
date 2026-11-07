@@ -676,6 +676,9 @@ function isLocalUrl(url) {
   return !h.includes(".") || /\.(?:localhost|local|lan|internal|home\.arpa)$/.test(h);
 }
 
+const BLOCKS =
+  "address,article,aside,blockquote,br,dd,div,dl,dt,figcaption,figure,form,h1,h2,h3,h4,h5,h6,header,hr,li,main,ol,p,pre,section,table,tr,ul";
+
 async function fetchUrl(url) {
   if (!/^https?:\/\//i.test(url)) throw new Error("url must be http(s)");
   // no cookies: a planted link must not act as the user on sites they are logged in to
@@ -687,9 +690,17 @@ async function fetchUrl(url) {
   if ((res.headers.get("content-type") ?? "").includes("html")) {
     const doc = parseHtml(text);
     doc.querySelectorAll("script,style,noscript,nav,footer,svg").forEach((n) => n.remove());
+    // textContent runs blocks together when the HTML has no whitespace between
+    // tags ("Release 4.2Builds are 20% faster"), so mark where blocks end
+    doc.querySelectorAll("li").forEach((n) => n.prepend("- "));
+    doc.querySelectorAll("td,th").forEach((n) => n.after(" "));
+    for (const n of doc.querySelectorAll(BLOCKS)) {
+      n.before("\n");
+      n.after("\n");
+    }
     text = doc.body?.textContent ?? "";
   }
-  return text.replace(/\s+/g, " ").trim().slice(0, MAX_TOOL_OUTPUT);
+  return text.replace(/[^\S\n]+/g, " ").replace(/ *\n\s*/g, "\n").trim().slice(0, MAX_TOOL_OUTPUT);
 }
 
 const OLDER_TOOL = {

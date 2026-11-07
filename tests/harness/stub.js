@@ -152,6 +152,7 @@
       const page = html(`<p>Page text of ${u}</p>`);
       // a public page that redirects into the local network
       if (u.endsWith("/redirect-local")) Object.defineProperty(page, "url", { value: "http://127.0.0.1/admin" });
+      if (u.endsWith("/layout")) return html('<header><h1>Igor docs</h1></header><nav><a href="/">Home</a><a href="/docs">Docs</a></nav><main><h2>Install</h2><p>Run <code>make</code> then <b>restart</b> Chrome.<br>Done.</p><table><tr><th>Version</th><th>Date</th></tr><tr><td>4.2</td><td>14 Nov</td></tr></table><div><div>Nested</div><div>blocks</div></div><ol><li>One</li><li>Two<ul><li>Two a</li></ul></li></ol></main><footer>Copyright</footer>');
       if (u.endsWith("/release")) return html("<h1>Release 4.2</h1><ol><li>Builds are 20% faster.</li><li>A new linter checks imports.</li><li>The code freeze is on 14 November.</li></ol>");
       return page;
     }
