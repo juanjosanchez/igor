@@ -11,10 +11,13 @@ Requirements: Chrome (or a Chromium browser with side panel support), [Ollama](h
    git clone https://github.com/pmatos/igor.git
    ```
 2. Pull a model if you have none, for example `ollama pull gemma4:12b`. Pick one that supports tools if you want web search; others fall back to plain chat.
-3. Let Ollama accept requests from the extension, otherwise it answers 403. Set `OLLAMA_ORIGINS=chrome-extension://*` and restart it:
-   - systemd user service: `systemctl --user edit ollama`, add `[Service]` and `Environment=OLLAMA_ORIGINS=chrome-extension://*`, then `systemctl --user restart ollama`
-   - manual: `OLLAMA_ORIGINS='chrome-extension://*' ollama serve`
-4. Load the extension: open `chrome://extensions`, enable **Developer mode**, click **Load unpacked** and select the cloned `igor` directory. Command-line flags like `--load-extension` are ignored by recent branded Chrome, so use this UI.
+3. Load the extension: open `chrome://extensions`, enable **Developer mode**, click **Load unpacked** and select the cloned `igor` directory. Command-line flags like `--load-extension` are ignored by recent branded Chrome, so use this UI. Note the ID shown on the Igor card (32 letters); Chrome derives it from the folder's path, so it stays the same until you move the folder.
+4. Let Ollama accept requests from Igor, otherwise it answers 403. Set `OLLAMA_ORIGINS=chrome-extension://<Igor's ID>` and restart Ollama:
+   - systemd user service: `systemctl --user edit ollama`, add `[Service]` and `Environment=OLLAMA_ORIGINS=chrome-extension://<Igor's ID>`, then `systemctl --user restart ollama`
+   - macOS launch agent: set `OLLAMA_ORIGINS` under `EnvironmentVariables` in its plist, then reload it with `launchctl bootout gui/$(id -u)/<its label>` and `launchctl bootstrap gui/$(id -u) <the plist>` (`kickstart` keeps the old settings)
+   - manual: `OLLAMA_ORIGINS='chrome-extension://<Igor's ID>' ollama serve`
+
+   Don't use `chrome-extension://*`: it lets every extension you install use Ollama, including its commands to delete and download models. If Igor cannot reach Ollama, the panel shows the exact value to set.
 5. Open Element Web in a tab and click the Igor toolbar icon. The panel docks beside the page. Choose a model in the dropdown; the room you have open is picked up automatically.
 
 Updating: `git pull`, then click the reload icon on the Igor card in `chrome://extensions`.

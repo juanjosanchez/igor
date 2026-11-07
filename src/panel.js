@@ -319,7 +319,7 @@ async function loadModels() {
     save({ model: el.model.value });
     await loadModelLimit();
   } catch (e) {
-    notice(`Cannot list models from ${cfg.baseUrl}: ${e.message}. Is Ollama running with OLLAMA_ORIGINS=chrome-extension://* ?`);
+    notice(`Cannot list models from ${cfg.baseUrl}: ${e.message}. Is Ollama running with OLLAMA_ORIGINS=${location.origin} ?`);
   }
 }
 
