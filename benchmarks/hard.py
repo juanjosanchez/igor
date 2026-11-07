@@ -499,7 +499,7 @@ def cmd_run(args):
             if i % 10 == 0:
                 print(f"tools {i}/{len(tools)}", flush=True)
         out.write(json.dumps({"bench": "meta", "model": args.model, "seconds": round(time.time() - start),
-                              "truncation_events": truncation_events(start), "loadavg": open("/proc/loadavg").read().split()[:3]}) + "\n")
+                              "truncation_events": truncation_events(start), "loadavg": [round(x, 2) for x in os.getloadavg()]}) + "\n")
     unload_all()
     print("wrote", path)
 
