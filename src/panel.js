@@ -43,7 +43,7 @@ let cutAt = 0;
 const entries = new WeakMap();
 
 function newChat(roomId) {
-  return { roomId, history: [], log: [], refs: new Map(), refsByNum: new Map(), next: 1, urls: new Set() };
+  return { roomId, history: [], log: [], refs: new Map(), refsByNum: new Map(), next: 1, urls: new Set(), anchor: null };
 }
 
 async function loadCfg() {
@@ -249,6 +249,7 @@ function saveChat() {
     refs: [...chat.refs.values()].filter((r) => cited.has(r.n)),
     next: chat.next,
     urls: [...chat.urls],
+    anchor: chat.anchor,
   };
   chrome.storage.session.set({ [key]: value }).catch(async () => {
     // over the session quota: drop the other rooms' chats and the encrypted rooms' part summaries
@@ -270,7 +271,7 @@ async function switchChat(roomId) {
   saveChat();
   chat = newChat(roomId);
   if (saved) {
-    Object.assign(chat, { history: saved.history, log: saved.log, next: saved.next, urls: new Set(saved.urls) });
+    Object.assign(chat, { history: saved.history, log: saved.log, next: saved.next, urls: new Set(saved.urls), anchor: saved.anchor ?? null });
     for (const r of saved.refs) {
       chat.refs.set(r.id, r);
       chat.refsByNum.set(r.n, r);
@@ -418,12 +419,15 @@ function systemPrompt(room, toolNames) {
       `notes on consecutive parts, oldest first, each answering the request for that part only:\n\n${room.parts.join("\n\n")}\n\n${clock}`
     );
   }
-  const lines = fitLines(room.messages, roomBudget());
+  // an anchored window already fits; its count would change the start of the request
+  const lines = room.anchored ? room.messages.map(formatMsg) : fitLines(room.messages, roomBudget());
   // say outright that a window is complete; left to compare timestamps, models report it as empty
   const what =
     room.since && lines.length === room.messages.length
       ? `All ${lines.length} ${kind} since ${formatTime(room.since)}, the whole requested period`
-      : `Most recent ${lines.length} ${kind}`;
+      : room.anchored
+        ? `Most recent ${kind}`
+        : `Most recent ${lines.length} ${kind}`;
   return `${header}.\n${what}, oldest first:\n\n${lines.join("\n")}\n\n${clock}`;
 }
 
@@ -443,6 +447,29 @@ function fitLines(messages, budget) {
     used += line.length;
   }
   return lines;
+}
+
+// Each question's room messages start where the previous question's did, so
+// Ollama can reuse its work on the start of the request; new messages go at
+// the end. A new start takes 3/4 of the limits, leaving room to grow.
+function roomWindow(messages) {
+  const budget = roomBudget();
+  const size = (ms) => ms.reduce((n, m) => n + formatMsg(m).length, 0);
+  // a reply points at [#N] only when that message is shown too
+  const withReplies = (ms) => {
+    const ids = new Set(ms.map((m) => m.id));
+    for (const m of ms) if (m.replyTo) m.replyRef = ids.has(m.replyTo) ? chat.refs.get(m.replyTo)?.n : undefined;
+    return ms;
+  };
+  const start = messages.findIndex((m) => m.id === chat.anchor);
+  if (start >= 0) {
+    const shown = withReplies(messages.slice(start));
+    if (size(shown) <= budget) return shown;
+  }
+  const recent = withReplies(messages.slice(-Math.ceil(cfg.maxMsgs * 0.75)));
+  const shown = withReplies(recent.slice(recent.length - fitLines(recent, budget * 0.75).length));
+  chat.anchor = shown[0]?.id ?? null;
+  return shown;
 }
 
 function weekStart(m) {
@@ -841,9 +868,14 @@ async function ask(text, opts = null) {
         return;
       } else {
         registerRefs(room);
+        if (!opts) {
+          room.messages = roomWindow(room.messages);
+          room.anchored = true;
+        }
       }
     }
 
+    // skip counts the messages the model sees, so get_older_messages continues right before them
     const ctx = { room: room && !room.error ? room : null, skip: room?.messages?.length ?? 0, searches: 0 };
     if (opts && ctx.room) {
       const r = ctx.room;

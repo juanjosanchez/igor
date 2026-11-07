@@ -294,7 +294,7 @@ def system_prompt(messages=None, use_tools=False, answer_format=False, formatter
         base += " Test format: reply with only the value itself (not a message reference), or exactly NOT_FOUND if the messages do not contain it."
     if messages is None:
         return f"{base}\n\n{clock}"
-    return f'{base}\n\nThe user is "Tester". Current room: "Test room".\nMost recent {len(messages)} messages, oldest first:\n\n' + "\n".join(map(formatter, messages)) + f"\n\n{clock}"
+    return f'{base}\n\nThe user is "Tester". Current room: "Test room".\nMost recent messages, oldest first:\n\n' + "\n".join(map(formatter, messages)) + f"\n\n{clock}"
 
 
 def tool_def(name, desc, props, required):
