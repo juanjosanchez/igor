@@ -110,6 +110,7 @@ export async function extractRoom(limit, since = 0) {
     topic: room.currentState?.getStateEvents("m.room.topic", "")?.getContent()
       ?.topic,
     memberCount: room.getJoinedMemberCount?.(),
+    encrypted: !!room.currentState?.getStateEvents("m.room.encryption", ""),
     me: client.getUser?.(myId)?.displayName || myId,
     messages,
     truncated,

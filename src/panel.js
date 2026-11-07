@@ -250,9 +250,9 @@ function saveChat() {
     urls: [...chat.urls],
   };
   chrome.storage.session.set({ [key]: value }).catch(async () => {
-    // over the session quota: drop the other rooms' chats
+    // over the session quota: drop the other rooms' chats and the encrypted rooms' part summaries
     const all = await chrome.storage.session.get(null);
-    await chrome.storage.session.remove(Object.keys(all).filter((k) => k.startsWith("chat:") && k !== key));
+    await chrome.storage.session.remove(Object.keys(all).filter((k) => (k.startsWith("chat:") && k !== key) || k.startsWith("part:")));
     chrome.storage.session.set({ [key]: value }).catch(() => {});
   });
 }
@@ -500,6 +500,8 @@ async function summarizeParts(room, task, status) {
   const words = [200, 150, 100, 60, 40].find((w) => w * 7 * chunks.length <= budget) ?? 40;
   const parts = [];
   let cached = 0;
+  // local storage is plain text on disk, so encrypted rooms' summaries stay in memory
+  const store = room.encrypted ? chrome.storage.session : chrome.storage.local;
   for (const [i, part] of chunks.entries()) {
     const period = `${formatTime(part[0].ts)} to ${formatTime(part.at(-1).ts)}`;
     const request =
@@ -507,12 +509,12 @@ async function summarizeParts(room, task, status) {
       `as bullet points in at most ${words} words, citing messages. If nothing here is relevant, reply "Nothing relevant."\n\n` +
       `Request: ${task}`;
     const key = await partKey(request, part);
-    const hit = (await chrome.storage.local.get(key))[key];
+    const hit = (await store.get(key))[key];
     let text;
     if (hit) {
       text = idsToRefs(hit.text);
       cached++;
-      chrome.storage.local.set({ [key]: { ...hit, at: Date.now() } });
+      store.set({ [key]: { ...hit, at: Date.now() } });
     } else {
       setText(status, `${room.messages.length} messages in ${chunks.length} parts: working on part ${i + 1} (${period})…`);
       const result = await streamChat(
@@ -524,7 +526,7 @@ async function summarizeParts(room, task, status) {
         () => {},
       );
       text = result.content.trim();
-      if (text && !result.cut) chrome.storage.local.set({ [key]: { text: refsToIds(text), at: Date.now() } });
+      if (text && !result.cut) store.set({ [key]: { text: refsToIds(text), at: Date.now(), v: 2 } });
     }
     parts.push(`Part ${i + 1} (${period}):\n${text}`);
   }
@@ -537,7 +539,8 @@ async function summarizeParts(room, task, status) {
 
 async function prunePartCache() {
   const all = await chrome.storage.local.get(null);
-  const old = Object.keys(all).filter((k) => k.startsWith("part:") && !(all[k]?.at > Date.now() - PART_TTL));
+  // entries without v: 2 predate keeping encrypted rooms' summaries in memory and may be from one
+  const old = Object.keys(all).filter((k) => k.startsWith("part:") && !(all[k]?.v === 2 && all[k].at > Date.now() - PART_TTL));
   if (old.length) await chrome.storage.local.remove(old);
 }
 
@@ -1033,9 +1036,13 @@ $("buttons").addEventListener("change", (e) => {
   renderButtons();
 });
 $("forget").addEventListener("click", async () => {
-  const keys = Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith("part:"));
-  await chrome.storage.local.remove(keys);
-  $("forget").textContent = `Forgot ${keys.length} cached part summaries`;
+  let n = 0;
+  for (const store of [chrome.storage.local, chrome.storage.session]) {
+    const keys = Object.keys(await store.get(null)).filter((k) => k.startsWith("part:"));
+    await store.remove(keys);
+    n += keys.length;
+  }
+  $("forget").textContent = `Forgot ${n} cached part summaries`;
 });
 $("clear").addEventListener("click", () => {
   abort?.abort();
