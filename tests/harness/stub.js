@@ -139,7 +139,10 @@
     const u = String(url);
     if (/^https:\/\/(pages|evil)\.example\//.test(u)) {
       window.__fetched.push(u);
-      return html(`<p>Page text of ${u}</p>`);
+      const page = html(`<p>Page text of ${u}</p>`);
+      // a public page that redirects into the local network
+      if (u.endsWith("/redirect-local")) Object.defineProperty(page, "url", { value: "http://127.0.0.1/admin" });
+      return page;
     }
     if (u.startsWith("https://search.brave.com/")) {
       return html('<div class="snippet" data-type="web"><a href="https://pages.example/result"><div class="title">Result</div></a><div class="content">a snippet</div></div>');

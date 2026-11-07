@@ -599,10 +599,23 @@ async function webSearch(query) {
   return `${results.join("\n\n")}\n\n${SNIPPET_NOTE}`;
 }
 
+// This computer and private networks, by address or local-only name. A public
+// name that resolves to a private address is not caught.
+function isLocalUrl(url) {
+  const h = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (h.includes(":")) return h === "::" || h === "::1" || /^(?:f[cd]|fe[89ab])/.test(h) || h.startsWith("::ffff:");
+  if (/^[\d.]+$/.test(h)) {
+    return /^(?:0|10|127)\.|^169\.254\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\.|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h);
+  }
+  return !h.includes(".") || /\.(?:localhost|local|lan|internal|home\.arpa)$/.test(h);
+}
+
 async function fetchUrl(url) {
   if (!/^https?:\/\//i.test(url)) throw new Error("url must be http(s)");
   // no cookies: a planted link must not act as the user on sites they are logged in to
   const res = await fetch(url, { credentials: "omit" });
+  // a redirect has already been followed; at least keep what it returned from the model
+  if (res.url && isLocalUrl(res.url)) throw new Error("the page redirected to a local network address");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   let text = await res.text();
   if ((res.headers.get("content-type") ?? "").includes("html")) {
@@ -681,6 +694,10 @@ async function runTool(name, args, ctx) {
     if (!chat.urls.has(normUrl(url))) {
       addMsg("error", `Did not open ${url}: only links from your messages, the room or search results can be fetched.`);
       throw new Error("this link does not appear in the user's messages, the room or search results, so it cannot be fetched; ask the user for the link");
+    }
+    if (isLocalUrl(url)) {
+      addMsg("error", `Did not open ${url}: it points to this computer or a local network.`);
+      throw new Error("addresses on this computer or a local network cannot be fetched");
     }
     return fetchUrl(url);
   }
