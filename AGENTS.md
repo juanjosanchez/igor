@@ -23,6 +23,7 @@ Igor is a Manifest V3 Chrome extension: a side-panel chat with a local Ollama mo
 - Ollama must allow extension origins (`OLLAMA_ORIGINS=chrome-extension://*`), otherwise requests get 403.
 - Chat requests send `think: false`, `options.temperature: 0` and an explicit `options.num_ctx`; without `num_ctx` Ollama silently truncates long room dumps, and at gemma4's default temperature (1) the same request sometimes comes back wrong (e.g. a window with messages reported as empty).
 - Even with `num_ctx`, a request that does not fit gets no error: Ollama keeps only its end (a 15.5k-token prompt at `num_ctx` 4096 was read as 2,051 tokens, and the model answered from that). `streamChat` flags a request whose `prompt_eval_count` is far below the characters sent, and `ask` shows a warning. The room budget assumes 2.5 characters per token; gemma4 measured 2.4-2.9 on chat lines.
+- `web_search` results end with `SNIPPET_NOTE`, which tells the model to open a page when the snippets lack the answer; without it gemma4 never fetched. `benchmarks/hard.py` mirrors it.
 - DuckDuckGo blocks extension-originated requests (202/403 bot check); web search uses Brave's HTML results. A blocked search must return an error to the model, never an empty result.
 - Models without tool support error with "does not support tools"; the loop retries without tools.
 - Element advances `m.fully_read` seconds after a room is shown, so the Unread button uses the marker the panel saw when the room first appeared (`seen` in `panel.js`).

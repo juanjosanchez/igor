@@ -577,6 +577,10 @@ function parseHtml(html) {
   return new DOMParser().parseFromString(clean, "text/html");
 }
 
+// without it the model answers from the snippets and almost never opens a page
+const SNIPPET_NOTE =
+  "These are only snippets. If they do not state the answer, open the most relevant result with fetch_url before answering.";
+
 async function webSearch(query) {
   const res = await fetch(`https://search.brave.com/search?q=${encodeURIComponent(query)}`);
   if (!res.ok) throw new Error(`search blocked or failed (HTTP ${res.status})`);
@@ -589,7 +593,7 @@ async function webSearch(query) {
     return `${title}\n${href}\n${desc}`;
   });
   if (!results.length) throw new Error("search returned no parseable results (possible bot check)");
-  return results.join("\n\n");
+  return `${results.join("\n\n")}\n\n${SNIPPET_NOTE}`;
 }
 
 async function fetchUrl(url) {

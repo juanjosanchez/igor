@@ -310,6 +310,9 @@ TOOL_DEFS = {
     "fetch_pdf": tool_def("fetch_pdf", "Download a PDF from a URL and return its extracted text.", {"url": {"type": "string", "description": "Absolute URL of a PDF file"}}, ["url"]),
 }
 
+# mirrors webSearch in src/panel.js
+SNIPPET_NOTE = "These are only snippets. If they do not state the answer, open the most relevant result with fetch_url before answering."
+
 # ---------------------------------------------------------------- ollama
 
 def post(path, body, timeout=900):
@@ -386,7 +389,7 @@ def mock_tool(item, name, args):
         q = str(args.get("query", "")).lower()
         hits = [p["hit"] for p in item["products"] if p["token"] in q and "hit" in p]
         rest = item["distractors"] if hits else item["distractors"][:2]
-        return "\n\n".join(hits + rest) or "No results."
+        return "\n\n".join(hits + rest + [SNIPPET_NOTE]) if hits + rest else "No results."
     if name == "fetch_url":
         for p in item["products"]:
             if str(args.get("url", "")) == p["url"] and "page" in p:
