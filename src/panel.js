@@ -38,6 +38,8 @@ let seen = null;
 // model saw, what the log shows, and the [#N] refs both of them use
 let chat = newChat(null);
 let switchLater = false;
+// tokens Ollama read when it dropped part of a request in the current answer
+let cutAt = 0;
 const entries = new WeakMap();
 
 function newChat(roomId) {
@@ -421,8 +423,9 @@ function systemPrompt(room, toolNames) {
   return `${header}.\n${what}, oldest first:\n\n${lines.join("\n")}`;
 }
 
+// room messages get ~60% of the window; gemma4 measured 2.4-2.9 characters per token on chat lines
 function roomBudget() {
-  return Math.floor(effectiveCtx() * 3 * 0.6);
+  return Math.floor(effectiveCtx() * 2.5 * 0.6);
 }
 
 // the newest messages that fit, formatted, oldest first
@@ -521,7 +524,7 @@ async function summarizeParts(room, task, status) {
         () => {},
       );
       text = result.content.trim();
-      if (text) chrome.storage.local.set({ [key]: { text: refsToIds(text), at: Date.now() } });
+      if (text && !result.cut) chrome.storage.local.set({ [key]: { text: refsToIds(text), at: Date.now() } });
     }
     parts.push(`Part ${i + 1} (${period}):\n${text}`);
   }
@@ -705,6 +708,10 @@ async function streamChat(messages, tools, onText) {
   let buf = "";
   let content = "";
   const toolCalls = [];
+  // An oversized request gets no error: Ollama keeps only its end, and its token
+  // count falls far below the size sent (chat text runs 2.4-2.9 chars per token).
+  const sent = messages.reduce((n, m) => n + (m.content?.length ?? 0), 0);
+  let cut = false;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -720,15 +727,19 @@ async function streamChat(messages, tools, onText) {
         onText(content);
       }
       if (chunk.message?.tool_calls) toolCalls.push(...chunk.message.tool_calls);
+      if (chunk.done && chunk.prompt_eval_count && sent / chunk.prompt_eval_count > 6) {
+        cut = true;
+        cutAt ||= chunk.prompt_eval_count;
+      }
     }
   }
-  return { content, toolCalls };
+  return { content, toolCalls, cut };
 }
 
-function addStats(div, t0, firstAt) {
+function addStats(div, t0, firstAt, model) {
   const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
   const entry = entries.get(div);
-  entry.stats = `${firstAt === null ? "" : `first token ${secs(firstAt - t0)} · `}total ${secs(performance.now() - t0)}`;
+  entry.stats = `${model ? `${model} · ` : ""}${firstAt === null ? "" : `first token ${secs(firstAt - t0)} · `}total ${secs(performance.now() - t0)}`;
   renderStats(div, entry);
 }
 
@@ -759,8 +770,10 @@ function renderStats(div, entry) {
 // the window was computed for. Any opts make room context mandatory.
 async function ask(text, opts = null) {
   const t0 = performance.now();
+  const model = el.model.value;
   let firstAt = null;
   let lastOut = null;
+  cutAt = 0;
   // Clear may swap the chat mid-answer; the rest of this answer stays with the old one
   const { history } = chat;
   const shown = addMsg("user", text);
@@ -875,7 +888,13 @@ async function ask(text, opts = null) {
   } catch (e) {
     if (e.name !== "AbortError") addMsg("error", `Request failed: ${e.message}`);
   } finally {
-    if (lastOut) addStats(lastOut, t0, firstAt);
+    if (lastOut) addStats(lastOut, t0, firstAt, model);
+    if (cutAt) {
+      addMsg(
+        "error",
+        `Ollama read only ${cutAt} tokens of this request: the rest did not fit the ${effectiveCtx()}-token context window and was dropped, so this answer may miss messages. Clear the chat, or raise the context window in Settings.`,
+      );
+    }
     finish();
   }
 }

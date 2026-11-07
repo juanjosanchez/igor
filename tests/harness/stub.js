@@ -199,10 +199,13 @@
         : `Answer from ${refsIn.length} message lines and ${(sys.match(/^Part \d+/gm) || []).length} parts; see [#${refsIn[0] ?? 1}]\n` +
           (sys.match(/^Part \d+ \(.*\):\n- part with .*$/gm) || []).join("\n");
       const enc = new TextEncoder();
+      // "overflow" reports what Ollama does with an oversized request: it reads only the end
+      const sent = body.messages.reduce((n, m) => n + (m.content?.length ?? 0), 0);
+      const done = { done: true, prompt_eval_count: last === "overflow" ? 2051 : Math.round(sent / 2.6) };
       const stream = new ReadableStream({
         start(c) {
           c.enqueue(enc.encode(JSON.stringify({ message: { content: text.slice(0, 10) } }) + "\n"));
-          c.enqueue(enc.encode(JSON.stringify({ message: { content: text.slice(10) } }) + "\n" + JSON.stringify({ done: true }) + "\n"));
+          c.enqueue(enc.encode(JSON.stringify({ message: { content: text.slice(10) } }) + "\n" + JSON.stringify(done) + "\n"));
           c.close();
         },
       });
