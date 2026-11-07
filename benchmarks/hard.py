@@ -277,9 +277,9 @@ def format_msg(m):
 
 def system_prompt(messages=None, use_tools=False, answer_format=False, formatter=None, reply_note=False):
     formatter = formatter or format_msg
-    base = ("The current local date and time is 2026-10-29 10:00 (Thursday, timezone Europe/Madrid). Message timestamps use the same timezone. "
-            'When the user says "today", they mean only messages dated 2026-10-29; ignore messages from other dates, and say so if there are none. '
-            "You are Igor, an assistant living in a sidebar next to the Element (Matrix) chat client. "
+    clock = ("The current local date and time is 2026-10-29 10:00 (Thursday, timezone Europe/Madrid). Message timestamps use the same timezone. "
+             'When the user says "today", they mean only messages dated 2026-10-29; ignore messages from other dates, and say so if there are none.')
+    base = ("You are Igor, an assistant living in a sidebar next to the Element (Matrix) chat client. "
             "Answer questions about the conversation in the current room and help the user think about it. "
             "Be concise. If the answer is not in the provided messages, say so instead of guessing. "
             "Each room message starts with a reference like [#12]. When you summarize or point to parts of the discussion, cite the relevant messages with these references, e.g. [#12] or [#12-#20], so the user can jump to them. Only cite references that appear in the messages.")
@@ -293,8 +293,8 @@ def system_prompt(messages=None, use_tools=False, answer_format=False, formatter
     if answer_format:
         base += " Test format: reply with only the value itself (not a message reference), or exactly NOT_FOUND if the messages do not contain it."
     if messages is None:
-        return base
-    return f'{base}\n\nThe user is "Tester". Current room: "Test room".\nMost recent {len(messages)} messages, oldest first:\n\n' + "\n".join(map(formatter, messages))
+        return f"{base}\n\n{clock}"
+    return f'{base}\n\nThe user is "Tester". Current room: "Test room".\nMost recent {len(messages)} messages, oldest first:\n\n' + "\n".join(map(formatter, messages)) + f"\n\n{clock}"
 
 
 def tool_def(name, desc, props, required):

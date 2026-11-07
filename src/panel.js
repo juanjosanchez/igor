@@ -394,16 +394,19 @@ function systemPrompt(room, toolNames) {
   const now = new Date();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const weekday = now.toLocaleDateString("en-US", { weekday: "long" });
-  const base =
+  // Last: Ollama reuses its work on the part of a request that matches the previous
+  // one from the start, so a new minute must not change that start
+  const clock =
     `The current local date and time is ${formatTime(now)} (${weekday}, timezone ${tz}). Message timestamps use the same timezone. ` +
-    `When the user says "today", they mean only messages dated ${formatTime(now).slice(0, 10)}; ignore messages from other dates, and say so if there are none. ` +
+    `When the user says "today", they mean only messages dated ${formatTime(now).slice(0, 10)}; ignore messages from other dates, and say so if there are none.`;
+  const base =
     "You are Igor, an assistant living in a sidebar next to the Element (Matrix) chat client. " +
     "Answer questions about the conversation in the current room and help the user think about it. " +
     "Be concise. If the answer is not in the provided messages, say so instead of guessing. " +
     "Each room message starts with a reference like [#12]. When you summarize or point to parts of the discussion, cite the relevant messages with these references, e.g. [#12] or [#12-#20], so the user can jump to them. Only cite references that appear in the messages. " +
     "A message written as 'Name (replying to [#M] Other)' is a reply to message [#M]; what it says is about or answers that message, and any first-person statement in it belongs to the replier." +
     (toolNames ? toolSentence(toolNames) : "");
-  if (!room || room.error) return base;
+  if (!room || room.error) return `${base}\n\n${clock}`;
   const header =
     `${base}\n\nThe user is "${room.me}". Current room: "${room.name}"` + (room.topic ? ` (topic: ${room.topic})` : "");
   const kind = room.mentionsOnly
@@ -412,7 +415,7 @@ function systemPrompt(room, toolNames) {
   if (room.parts) {
     return (
       `${header}.\nThe ${room.messages.length} ${kind} since ${formatTime(room.since)} do not fit at once, so here are ` +
-      `notes on consecutive parts, oldest first, each answering the request for that part only:\n\n${room.parts.join("\n\n")}`
+      `notes on consecutive parts, oldest first, each answering the request for that part only:\n\n${room.parts.join("\n\n")}\n\n${clock}`
     );
   }
   const lines = fitLines(room.messages, roomBudget());
@@ -421,7 +424,7 @@ function systemPrompt(room, toolNames) {
     room.since && lines.length === room.messages.length
       ? `All ${lines.length} ${kind} since ${formatTime(room.since)}, the whole requested period`
       : `Most recent ${lines.length} ${kind}`;
-  return `${header}.\n${what}, oldest first:\n\n${lines.join("\n")}`;
+  return `${header}.\n${what}, oldest first:\n\n${lines.join("\n")}\n\n${clock}`;
 }
 
 // room messages get ~60% of the window; gemma4 measured 2.4-2.9 characters per token on chat lines
