@@ -352,12 +352,31 @@ async function runInTab(func, args) {
 }
 
 // callers register refs once they know the room is the chat's
-function getRoom(limit, since = 0) {
-  return runInTab(extractRoom, [limit, since]);
+function getRoom(limit, since = 0, after = null) {
+  return runInTab(extractRoom, [limit, since, after]);
+}
+
+// The recent messages of the last question, so the next one only fetches newer
+// ones; a full reload at least every 15 minutes picks up renames and the like.
+let lastLoad = null;
+
+async function loadRecent() {
+  const prev = lastLoad?.roomId === chat.roomId && Date.now() - lastLoad.at < 15 * 60000 ? lastLoad : null;
+  const r = await getRoom(cfg.maxMsgs, 0, prev?.messages.at(-1)?.id ?? null);
+  if (r.error) return r;
+  if (prev && r.after) {
+    const gone = new Set(r.redacted);
+    const known = new Map(prev.messages.map((m) => [m.id, m]));
+    for (const m of r.messages) if (m.replyTo && !m.replyToSender) m.replyToSender = known.get(m.replyTo)?.sender;
+    r.messages = [...prev.messages.filter((m) => !gone.has(m.id)), ...r.messages].slice(-cfg.maxMsgs);
+  }
+  lastLoad = { roomId: r.roomId, messages: r.messages, at: prev?.at ?? Date.now() };
+  return r;
 }
 
 async function refreshInfo() {
-  const r = await getRoom(1);
+  // no messages: only the room's name, members and read marker, without paging history
+  const r = await getRoom(0);
   el.grant.hidden = r.error !== "inject";
   el.grant.dataset.origin = r.origin ?? "";
   roomReady = !r.error;
@@ -691,11 +710,13 @@ const SEARCH_HITS = 20;
 
 async function getOlderMessages(ctx, count) {
   const n = Math.min(Math.max(Math.floor(count) || 50, 1), 100);
-  const r = await getRoom(ctx.skip + n);
+  // messages may have arrived since the question, so fetch extra and cut by time
+  const r = await getRoom(ctx.skip + n + 50);
   if (r.error) throw new Error(r.error);
   if (r.roomId !== ctx.room.roomId) throw new Error("the open room changed");
   registerRefs(r);
-  const older = r.messages.slice(0, Math.max(0, r.messages.length - ctx.skip));
+  const older = r.messages.filter((m) => m.ts < ctx.before).slice(-n);
+  if (older.length) ctx.before = older[0].ts;
   ctx.skip += older.length;
   return older.length ? older.map(formatMsg).join("\n") : "No older messages.";
 }
@@ -804,10 +825,12 @@ async function streamChat(messages, tools, onText) {
   return { content, toolCalls, cut };
 }
 
-function addStats(div, t0, firstAt, model) {
+function addStats(div, t0, firstAt, model, roomMs = null) {
   const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
   const entry = entries.get(div);
-  entry.stats = `${model ? `${model} · ` : ""}${firstAt === null ? "" : `first token ${secs(firstAt - t0)} · `}total ${secs(performance.now() - t0)}`;
+  entry.stats =
+    `${model ? `${model} · ` : ""}${roomMs === null ? "" : `room ${secs(roomMs)} · `}` +
+    `${firstAt === null ? "" : `first token ${secs(firstAt - t0)} · `}total ${secs(performance.now() - t0)}`;
   renderStats(div, entry);
 }
 
@@ -841,6 +864,7 @@ async function ask(text, opts = null) {
   const model = el.model.value;
   let firstAt = null;
   let lastOut = null;
+  let roomMs = null;
   cutAt = 0;
   // Clear may swap the chat mid-answer; the rest of this answer stays with the old one
   const { history } = chat;
@@ -856,7 +880,9 @@ async function ask(text, opts = null) {
     let status = null;
     if (opts || cfg.useCtx) {
       if (opts?.since) status = addMsg("tool", `loading messages since ${formatTime(opts.since)}…`);
-      room = await getRoom(opts?.since ? MAX_WINDOW_MSGS : cfg.maxMsgs, opts?.since ?? 0);
+      const loadAt = performance.now();
+      room = opts?.since ? await getRoom(MAX_WINDOW_MSGS, opts.since) : await loadRecent();
+      roomMs = performance.now() - loadAt;
       if (room.error && opts) {
         history.pop();
         addMsg("error", `Needs the open room (${room.error}).`);
@@ -879,8 +905,13 @@ async function ask(text, opts = null) {
       }
     }
 
-    // skip counts the messages the model sees, so get_older_messages continues right before them
-    const ctx = { room: room && !room.error ? room : null, skip: room?.messages?.length ?? 0, searches: 0 };
+    // get_older_messages continues right before the oldest message the model sees
+    const ctx = {
+      room: room && !room.error ? room : null,
+      skip: room?.messages?.length ?? 0,
+      before: room?.messages?.[0]?.ts ?? Infinity,
+      searches: 0,
+    };
     if (opts && ctx.room) {
       const r = ctx.room;
       const first = r.messages[0];
@@ -961,7 +992,7 @@ async function ask(text, opts = null) {
   } catch (e) {
     if (e.name !== "AbortError") addMsg("error", `Request failed: ${e.message}`);
   } finally {
-    if (lastOut) addStats(lastOut, t0, firstAt, model);
+    if (lastOut) addStats(lastOut, t0, firstAt, model, roomMs);
     if (cutAt) {
       addMsg(
         "error",
@@ -1152,8 +1183,9 @@ el.grant.addEventListener("click", async () => {
 });
 
 chrome.tabs.onActivated.addListener(refreshInfo);
-chrome.tabs.onUpdated.addListener((_id, change) => {
-  if (change.url || change.status === "complete") refreshInfo();
+// fires for every tab in every window; only the one the panel reads matters
+chrome.tabs.onUpdated.addListener(async (id, change) => {
+  if ((change.url || change.status === "complete") && id === (await activeTab())?.id) refreshInfo();
 });
 
 await loadCfg();

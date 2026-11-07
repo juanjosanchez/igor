@@ -1,6 +1,8 @@
 // Injected into the Element tab with world: "MAIN". Must be self-contained:
 // it is serialized by chrome.scripting.executeScript.
-export async function extractRoom(limit, since = 0) {
+// With after (an event id), only events newer than it are fetched; the caller
+// keeps the older ones from its previous call.
+export async function extractRoom(limit, since = 0, after = null) {
   const peg = window.mxMatrixClientPeg;
   const client =
     (peg && (peg.safeGet?.() ?? peg.get?.() ?? peg.matrixClient)) || null;
@@ -31,22 +33,32 @@ export async function extractRoom(limit, since = 0) {
   let events = room.getLiveTimeline().getEvents().filter(isMessage);
   // with a time window, report when its start could not be reached
   let truncated = since > 0 && !(events[0]?.getTs() < since);
+  let found = false;
+  let redacted = [];
   if (client.createMessagesRequest) {
     const mapper = client.getEventMapper();
     const fetched = [];
     let from = null;
     let more = true;
     const enough = () =>
-      since
+      found ||
+      (since
         ? fetched.length > 0 && fetched[fetched.length - 1].getTs() < since
-        : fetched.filter(isMessage).length >= limit;
+        : fetched.filter(isMessage).length >= limit);
     try {
       for (let i = 0; i < (since ? 50 : 10) && !enough(); i++) {
-        const page = await client.createMessagesRequest(room.roomId, from, 100, "b");
+        const page = await client.createMessagesRequest(room.roomId, from, after && !i ? 20 : 100, "b");
         const batch = (page.chunk || []).map(mapper);
+        // pages run newest first, so what comes before after is new
+        const at = after ? batch.findIndex((e) => e.getId() === after) : -1;
+        if (at >= 0) {
+          batch.length = at;
+          found = true;
+        }
         await Promise.all(batch.map((e) => client.decryptEventIfNeeded?.(e)));
         fetched.push(...batch);
         from = page.end;
+        if (found) break;
         if (!from || !batch.length) {
           more = false;
           break;
@@ -54,6 +66,10 @@ export async function extractRoom(limit, since = 0) {
       }
       events = fetched.filter(isMessage).sort((a, b) => a.getTs() - b.getTs());
       truncated = since > 0 && more && !enough();
+      // messages the caller kept that were deleted since
+      redacted = fetched
+        .filter((e) => e.getType() === "m.room.redaction")
+        .map((e) => e.getAssociatedId?.() ?? e.event?.redacts ?? e.getContent().redacts);
     } catch {
       // fall back to whatever the live timeline holds
     }
@@ -115,6 +131,7 @@ export async function extractRoom(limit, since = 0) {
     messages,
     truncated,
     readTs,
+    ...(found ? { after, redacted } : {}),
   };
 }
 

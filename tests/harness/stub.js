@@ -103,6 +103,16 @@
     sessionStorage.setItem("harness-room", id);
     if (notify) for (const f of updated) f(1, { url: tab.url });
   };
+  // any tab's update, e.g. __tabUpdated(2, { status: "complete" }) for a tab the panel does not read
+  window.__tabUpdated = (id, change) => { for (const f of updated) f(id, change); };
+  // new events in the unencrypted room, newer than everything loaded so far
+  let posted = 0;
+  window.__post = (body, sender = "@ana:example.org") => {
+    const event_id = `$p${posted++}`;
+    raw.push({ event_id, sender, origin_server_ts: Date.now(), content: { msgtype: "m.text", body } });
+    return event_id;
+  };
+  window.__redact = (id) => raw.push({ event_id: `$x${posted++}`, type: "m.room.redaction", sender: ME, origin_server_ts: Date.now(), content: { redacts: id } });
   window.chrome = {
     storage: { session: {
       get: async (k) => sessPick(k),
