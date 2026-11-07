@@ -166,6 +166,10 @@
       if (lastMsg.tool_name === "web_search" && !last.startsWith("Error")) {
         return toolCall("fetch_url", { url: last.match(/https:\S+/)[0] });
       }
+      if (lastMsg.role === "user" && last === "markdown") {
+        const md = "### Decisions\n\n*   Ship on *Friday* [#1]\n    *   after the **freeze**\n*   Use `make check`\n\n1. first\n2. second\n\n---\nSee https://example.org/x and <b>not bold</b>\n```\n* not a list\n```";
+        return new Response(JSON.stringify({ message: { content: md } }) + "\n" + JSON.stringify({ done: true }) + "\n");
+      }
       if (lastMsg.role === "user" && last.startsWith("search ")) {
         const call = { function: { name: "search_room", arguments: { query: last.slice(7) } } };
         return new Response(new ReadableStream({ start(c) {

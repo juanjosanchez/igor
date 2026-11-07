@@ -12,6 +12,11 @@ header select { flex: 1; min-width: 0; }
 .msg.error { align-self: stretch; background: #d336; }
 .msg pre { overflow-x: auto; padding: 6px; background: #0003; border-radius: 4px; }
 .msg code { font-family: ui-monospace, monospace; }
+.msg.assistant > :first-child { margin-top: 0; }
+.msg p, .msg ul, .msg ol, .msg pre { margin: 0 0 6px; }
+.msg ul, .msg ol { padding-left: 20px; }
+.msg .h { font-weight: 600; margin: 8px 0 4px; }
+.msg hr { border: none; border-top: 1px solid #8886; margin: 8px 0; }
 #quick { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 8px 0; border-top: 1px solid #8884; font-size: 12px; }
 #quick[hidden] { display: none; }
 #form { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border-top: 1px solid #8884; }

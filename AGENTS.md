@@ -14,7 +14,7 @@ Igor is a Manifest V3 Chrome extension: a side-panel chat with a local Ollama mo
 
 - No inline `<script>` (MV3 CSP), no remote code, no build tooling.
 - Comment sparingly; only non-obvious code.
-- Render model output by escaping first, then applying the tiny markdown pass (`renderMarkdown`). Never insert raw model or page text as HTML.
+- Render model output by escaping first, then applying the tiny markdown pass (`renderMarkdown`: code, headings, lists, bold, italics). Never insert raw model or page text as HTML, and never turn a URL the model wrote into a link: one click would send whatever the model put in it.
 - Never commit room contents, tokens, or personal hostnames. Test output from real rooms stays out of the repo.
 
 ## Things that will bite you

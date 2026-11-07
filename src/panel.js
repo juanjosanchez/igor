@@ -139,13 +139,63 @@ function toMarkdown(text) {
   );
 }
 
+function inlineMarkdown(s) {
+  return s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+    .replace(/(^|[^*\w])\*(?=\S)([^*]*?\S)\*(?![*\w])/g, "$1<i>$2</i>");
+}
+
+// Escaped first, so only the tags added here exist. Links the model writes stay
+// plain text: a click on one would send whatever the model put in the URL.
 function renderMarkdown(text) {
-  return linkRefs(escapeHtml(text))
-    .replace(/```(?:\w*)\n?([\s\S]*?)```/g, (_, code) => `<pre><code>${code}</code></pre>`)
-    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
-    .replace(/\n/g, "<br>")
-    .replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, (m) => m.replace(/<br>/g, "\n"));
+  const blocks = [];
+  const src = escapeHtml(text).replace(/```(?:\w*)\n?([\s\S]*?)```/g, (_, code) => `\0${blocks.push(code) - 1}\0`);
+  const out = [];
+  let para = [];
+  const lists = [];
+  const flush = () => {
+    if (para.length) out.push(`<p>${para.join("<br>")}</p>`);
+    para = [];
+  };
+  const closeLists = (indent = -1) => {
+    while (lists.length && lists.at(-1).indent > indent) out.push(`</li></${lists.pop().tag}>`);
+  };
+  for (const line of src.split("\n")) {
+    const item = line.match(/^(\s*)(?:[*+-]|(\d+)[.)])\s+(.*)$/);
+    if (/^\s*(?:[-*_]\s*){3,}$/.test(line) || /^\s*\0\d+\0\s*$/.test(line) || /^#{1,6}\s/.test(line)) {
+      flush();
+      closeLists();
+      if (line.includes("\0")) out.push(line.trim());
+      else if (line.startsWith("#")) out.push(`<div class="h">${inlineMarkdown(line.replace(/^#+\s+/, ""))}</div>`);
+      else out.push("<hr>");
+    } else if (item) {
+      flush();
+      const indent = item[1].replace(/\t/g, "    ").length;
+      const tag = item[2] ? "ol" : "ul";
+      closeLists(indent);
+      const top = lists.at(-1);
+      if (top?.indent === indent && top.tag === tag) {
+        out.push("</li>");
+      } else {
+        if (top?.indent === indent) out.push(`</li></${lists.pop().tag}>`);
+        out.push(tag === "ol" ? `<ol start="${item[2]}">` : "<ul>");
+        lists.push({ tag, indent });
+      }
+      out.push(`<li>${inlineMarkdown(item[3])}`);
+    } else if (!line.trim()) {
+      flush();
+    } else if (lists.length && /^\s/.test(line)) {
+      out.push(`<br>${inlineMarkdown(line.trim())}`);
+    } else {
+      closeLists();
+      para.push(inlineMarkdown(line));
+    }
+  }
+  flush();
+  closeLists();
+  const html = out.join("").replace(/\0(\d+)\0/g, (_, i) => `<pre><code>${blocks[i]}</code></pre>`);
+  return linkRefs(html);
 }
 
 function renderEntry(entry) {
