@@ -687,8 +687,17 @@ async function findMessages(roomId, query) {
   return `${head}. Oldest first:\n${lines.join("\n")}`;
 }
 
+// Queries go to a third party, and a steered model can paste room messages into them
+const MAX_QUERY = 150;
+const MAX_SEARCHES = 5;
+
 async function runTool(name, args, ctx) {
-  if (name === "web_search") return webSearch(String(args?.query ?? ""));
+  if (name === "web_search") {
+    const query = String(args?.query ?? "");
+    if (query.length > MAX_QUERY) throw new Error(`queries are limited to ${MAX_QUERY} characters; search with a few keywords`);
+    if (++ctx.searches > MAX_SEARCHES) throw new Error(`at most ${MAX_SEARCHES} searches per answer; answer with what you have`);
+    return webSearch(query);
+  }
   if (name === "fetch_url") {
     const url = String(args?.url ?? "");
     if (!chat.urls.has(normUrl(url))) {
@@ -831,7 +840,7 @@ async function ask(text, opts = null) {
       }
     }
 
-    const ctx = { room: room && !room.error ? room : null, skip: room?.messages?.length ?? 0 };
+    const ctx = { room: room && !room.error ? room : null, skip: room?.messages?.length ?? 0, searches: 0 };
     if (opts && ctx.room) {
       const r = ctx.room;
       const first = r.messages[0];
